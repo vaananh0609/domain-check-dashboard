@@ -313,7 +313,11 @@ def live_pie_chart(summary: Dict[str, int]):
         title="Tỷ lệ kiểm thử live Gateway",
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
-    fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+    # Ensure Plotly uses the same PDF font when available
+    try:
+        fig.update_layout(font=dict(family=PDF_FONT_NAME), margin=dict(l=10, r=10, t=60, b=10))
+    except Exception:
+        fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
     return fig
 
 
