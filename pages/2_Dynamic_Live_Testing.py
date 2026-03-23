@@ -706,7 +706,7 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     st.markdown(
-        '<a class="back-home-link" href="/" target="_self">← Quay về trang chọn tính năng</a>',
+        '<a class="back-home-link" href="/" target="_self">← Quay về trang chủ</a>',
         unsafe_allow_html=True,
     )
 
