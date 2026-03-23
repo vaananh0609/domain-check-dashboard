@@ -105,23 +105,28 @@ STATUS_LEAKED = "LEAKED"
 STATUS_DEAD = "DEAD DOMAIN"
 
 
-def register_pdf_vietnamese_font() -> str:
+def register_pdf_vietnamese_font() -> bool:
+    # Try common system fonts and register under a single name 'VietFont'
     font_candidates = [
-        ("C:\\Windows\\Fonts\\arial.ttf", "ArialUnicodeVN"),
-        ("C:\\Windows\\Fonts\\times.ttf", "TimesUnicodeVN"),
-        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVuSansVN"),
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\times.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/DejaVuSans.ttf",
     ]
-    for path, name in font_candidates:
+    viet_font_registered = False
+    for path in font_candidates:
         if os.path.exists(path):
             try:
-                pdfmetrics.registerFont(TTFont(name, path))
-                return name
+                pdfmetrics.registerFont(TTFont("VietFont", path))
+                viet_font_registered = True
+                break
             except Exception:
                 continue
-    return "Helvetica"
+    return viet_font_registered
 
 
-PDF_FONT_NAME = register_pdf_vietnamese_font()
+viet_font_registered = register_pdf_vietnamese_font()
+PDF_FONT_NAME = "VietFont" if viet_font_registered else "Helvetica"
 
 IPV4_REGEX = re.compile(
     r"^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
