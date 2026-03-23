@@ -307,7 +307,7 @@ with col1:
             <div class="feature-icon">📊</div>
             <div class="feature-title">Static Analysis</div>
             <div class="feature-desc">
-                Đối soát danh sách log lọt với blacklist, phân loại nguyên nhân rò rỉ một cách chính xác.
+                Đối soát danh sách log lọt với blacklist, hỗ trợ bóc tách và phân loại các nguyên nhân rò rỉ tiềm ẩn.
             </div>
             <a href="/Static_Analysis" target="_self" class="feature-link">
                 Start →
@@ -323,7 +323,7 @@ with col2:
             <div class="feature-icon">🌐</div>
             <div class="feature-title">Dynamic Live Testing</div>
             <div class="feature-desc">
-                Kiểm thử trực tiếp về mạng, phân loại trạng thái Block/Leak theo thời gian thực.
+                Giả lập truy cập mạng để ghi nhận phản hồi, đánh giá trạng thái Block/Leak tại thời điểm kiểm tra.
             </div>
             <a href="/Dynamic_Live_Testing" target="_self" class="feature-link">
                 Start →
