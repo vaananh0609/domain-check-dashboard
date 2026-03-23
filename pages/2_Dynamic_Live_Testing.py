@@ -321,6 +321,20 @@ def live_pie_chart(summary: Dict[str, int]):
     return fig
 
 
+def fig_to_png_bytes(fig) -> bytes | None:
+    try:
+        img_bytes = fig.to_image(format="png")
+        return img_bytes
+    except Exception:
+        try:
+            buf = io.BytesIO()
+            fig.write_image(buf, format="png")
+            buf.seek(0)
+            return buf.read()
+        except Exception:
+            return None
+
+
 def to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -411,9 +425,23 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
     )
     elements.append(Paragraph(info_text, centered_info_style))
     elements.append(Spacer(1, 10))
-    # center the pie chart using available width
+    # embed the Plotly pie chart as PNG (ensures Plotly uses registered font)
     avail_width = A4[0] - LEFT_MARGIN_PT - RIGHT_MARGIN_PT
-    elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
+    fig = live_pie_chart(summary)
+    img = fig_to_png_bytes(fig)
+    if img:
+        try:
+            img_buf = io.BytesIO(img)
+            img_width = avail_width * 0.9
+            rl_img = RLImage(img_buf, width=img_width, height=3 * inch)
+            rl_img.hAlign = "CENTER"
+            elements.append(rl_img)
+            elements.append(Spacer(1, 12))
+        except Exception:
+            # fallback to vector drawing if image embedding fails
+            elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
+    else:
+        elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
     elements.append(Spacer(1, 14))
 
     max_rows = 1000000
