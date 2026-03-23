@@ -105,58 +105,30 @@ STATUS_LEAKED = "LEAKED"
 STATUS_DEAD = "DEAD DOMAIN"
 
 
-def ensure_local_viet_font() -> bool:
-    font_url = (
-        "https://github.com/googlefonts/noto-fonts/raw/main/phaseIII_only/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
-    )
-    try:
-        base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-        fonts_dir = os.path.join(base_dir, "fonts")
-        os.makedirs(fonts_dir, exist_ok=True)
-        local_path = os.path.join(fonts_dir, "NotoSans-Regular.ttf")
-
-        if os.path.exists(local_path):
-            try:
-                pdfmetrics.registerFont(TTFont("VietFont", local_path))
-                return True
-            except Exception:
-                pass
-
-        try:
-            import requests
-
-            resp = requests.get(font_url, timeout=20)
-            if resp.status_code == 200 and resp.content:
-                with open(local_path, "wb") as f:
-                    f.write(resp.content)
-                try:
-                    pdfmetrics.registerFont(TTFont("VietFont", local_path))
-                    return True
-                except Exception:
-                    return False
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-    # fallback to system fonts
+def register_pdf_vietnamese_font() -> bool:
+    # Try common system fonts and register under a single name 'VietFont'
+    # Prefer a bundled font in the repo under `fonts/` so public hosts render Vietnamese.
+    repo_local = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "fonts", "NotoSans-Regular.ttf"))
     font_candidates = [
+        repo_local,
         "C:\\Windows\\Fonts\\arial.ttf",
         "C:\\Windows\\Fonts\\times.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/DejaVuSans.ttf",
     ]
+    viet_font_registered = False
     for path in font_candidates:
         if os.path.exists(path):
             try:
                 pdfmetrics.registerFont(TTFont("VietFont", path))
-                return True
+                viet_font_registered = True
+                break
             except Exception:
                 continue
+    return viet_font_registered
 
-    return False
 
-
-viet_font_registered = ensure_local_viet_font()
+viet_font_registered = register_pdf_vietnamese_font()
 PDF_FONT_NAME = "VietFont" if viet_font_registered else "Helvetica"
 
 IPV4_REGEX = re.compile(
@@ -345,10 +317,7 @@ def live_pie_chart(summary: Dict[str, int]):
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
     try:
-        if viet_font_registered:
-            fig.update_layout(margin=dict(l=10, r=10, t=60, b=10), font_family="Noto Sans")
-        else:
-            fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+        fig.update_layout(font=dict(family=("VietFont" if viet_font_registered else "Helvetica")), margin=dict(l=10, r=10, t=60, b=10))
     except Exception:
         fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
     return fig
