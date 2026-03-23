@@ -126,16 +126,30 @@ try:
         ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "VietFont"),
         ("/System/Library/Fonts/DejaVuSans.ttf", "VietFont"),
     ]
-    viet_font_registered = False
-    for font_path, font_name in font_candidates:
-        if os.path.exists(font_path):
-            try:
-                pdfmetrics.registerFont(TTFont(font_name, font_path))
+        # Prefer a bundled font inside the repo (fonts/NotoSans-Regular.ttf) for Streamlit Cloud
+        viet_font_registered = False
+        try:
+            repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            bundled = os.path.join(repo_dir, "fonts", "NotoSans-Regular.ttf")
+            if os.path.exists(bundled):
+                pdfmetrics.registerFont(TTFont("VietFont", bundled))
                 viet_font_registered = True
-                break
-            except Exception:
-                pass
-except Exception:
+            else:
+                # Fallback to common system fonts
+                font_candidates = [
+                    ("C:\\Windows\\Fonts\\arial.ttf", "VietFont"),
+                    ("C:\\Windows\\Fonts\\times.ttf", "VietFont"),
+                    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "VietFont"),
+                    ("/System/Library/Fonts/DejaVuSans.ttf", "VietFont"),
+                ]
+                for font_path, font_name in font_candidates:
+                    if os.path.exists(font_path):
+                        try:
+                            pdfmetrics.registerFont(TTFont(font_name, font_path))
+                            viet_font_registered = True
+                            break
+                        except Exception:
+                            continue
     viet_font_registered = False
 
 
@@ -282,7 +296,8 @@ def pie_chart(summary: Dict[str, int]):
         title="Tỷ lệ phân loại nguyên nhân lọt",
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
-    fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+    # Ask Plotly to use Noto Sans for rendering text where possible
+    fig.update_layout(font=dict(family=("Noto Sans" if viet_font_registered else "Arial")), margin=dict(l=10, r=10, t=60, b=10))
     return fig
 
 

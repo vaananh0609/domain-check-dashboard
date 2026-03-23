@@ -313,7 +313,8 @@ def live_pie_chart(summary: Dict[str, int]):
         title="Tỷ lệ kiểm thử live Gateway",
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
-    fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+    # Prefer Noto Sans when available for consistent Vietnamese rendering
+    fig.update_layout(font=dict(family=("Noto Sans" if viet_font_registered else "Arial")), margin=dict(l=10, r=10, t=60, b=10))
     return fig
 
 
