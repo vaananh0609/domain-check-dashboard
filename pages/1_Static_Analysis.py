@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, Image as RLImage
 from reportlab.pdfbase import pdfmetrics
@@ -16,6 +17,13 @@ from reportlab.pdfbase.ttfonts import TTFont
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+# Margin helpers (mm => points)
+MM_TO_PT = 2.83465
+LEFT_MARGIN_PT = 32 * MM_TO_PT
+RIGHT_MARGIN_PT = 18 * MM_TO_PT
+TOP_MARGIN_PT = 22 * MM_TO_PT
+BOTTOM_MARGIN_PT = 22 * MM_TO_PT
 
 with st.sidebar:
     st.markdown("### Điều hướng")
@@ -297,11 +305,11 @@ def to_pdf_bytes_with_chart(df: pd.DataFrame, fig) -> bytes:
     output = io.BytesIO()
     doc = SimpleDocTemplate(
         output,
-        pagesize=landscape(A4),
-        rightMargin=15,
-        leftMargin=15,
-        topMargin=15,
-        bottomMargin=15,
+        pagesize=A4,
+        rightMargin=RIGHT_MARGIN_PT,
+        leftMargin=LEFT_MARGIN_PT,
+        topMargin=TOP_MARGIN_PT,
+        bottomMargin=BOTTOM_MARGIN_PT,
     )
     styles = getSampleStyleSheet()
     
@@ -311,7 +319,7 @@ def to_pdf_bytes_with_chart(df: pd.DataFrame, fig) -> bytes:
         title_style.fontName = "VietFont"
     
     elements = [
-        Paragraph("Báo cáo Static Analysis - Đối soát Log Lọt", title_style),
+        Paragraph("BÁO CÁO PHÂN TÍCH DỮ LIỆU TĨNH: ĐỐI SOÁT DANH SÁCH RÒ RỈ", title_style),
         Spacer(1, 0.2 * inch),
     ]
 
@@ -322,7 +330,11 @@ def to_pdf_bytes_with_chart(df: pd.DataFrame, fig) -> bytes:
     if img:
         try:
             img_buf = io.BytesIO(img)
-            rl_img = RLImage(img_buf, width=6.5 * inch, height=3 * inch)
+            # scale image to fit portrait A4 usable width
+            avail_width = A4[0] - (LEFT_MARGIN_PT + RIGHT_MARGIN_PT)
+            img_width = avail_width * 0.9
+            rl_img = RLImage(img_buf, width=img_width, height=3 * inch)
+            rl_img.hAlign = "CENTER"
             elements.append(rl_img)
             elements.append(Spacer(1, 0.2 * inch))
         except Exception:
@@ -341,38 +353,86 @@ def to_pdf_bytes_with_chart(df: pd.DataFrame, fig) -> bytes:
         row_data = [str(val) for val in row.values]
         table_data.append(row_data)
 
-    # Calculate column widths to fit landscape A4 (11 inches wide - margins 0.3 inches each side = ~10.4 inches usable)
-    # Landscape A4: 11 inches (792 points) - 30 points margins each side = 732 points
+    # Calculate column widths to fit portrait A4 and autofit based on content
     num_cols = len(headers)
-    col_width = 732 / num_cols if num_cols > 0 else 100
-    col_widths = [col_width] * num_cols
+    # Available width in points for portrait A4
+    page_w = A4[0]
+    avail_width = page_w - (LEFT_MARGIN_PT + RIGHT_MARGIN_PT)
+
+    # Use Paragraph cells to support wrapping
+    styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle(
+        "cell",
+        parent=styles["Normal"],
+        fontName=("VietFont" if viet_font_registered else "Helvetica"),
+        fontSize=8,
+        leading=10,
+    )
+    header_style = ParagraphStyle(
+        "header",
+        parent=styles["Normal"],
+        fontName=("VietFont" if viet_font_registered else "Helvetica-Bold"),
+        fontSize=9,
+        leading=11,
+        alignment=TA_CENTER,
+    )
+
+    # Build table data with Paragraphs
+    table_data = [[Paragraph(h, header_style) for h in headers]]
+    col_max = [0] * num_cols
+    for _, row in safe_df.iterrows():
+        row_items = []
+        for i, v in enumerate(row.values.tolist()):
+            s = str(v)
+            col_max[i] = max(col_max[i], len(s))
+            row_items.append(Paragraph(s, cell_style))
+        table_data.append(row_items)
+
+    total = sum(col_max) if sum(col_max) > 0 else num_cols
+    min_w = 40
+    col_widths = [max(min_w, avail_width * (m / total)) for m in col_max]
 
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
-    
+
     # Font name for table
     table_font = "VietFont" if viet_font_registered else "Helvetica"
     table_font_bold = "VietFont" if viet_font_registered else "Helvetica-Bold"
-    
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0d47a1")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                ("FONTNAME", (0, 0), (-1, 0), table_font_bold),
-                ("FONTSIZE", (0, 0), (-1, 0), 7),
-                ("FONTNAME", (0, 1), (-1, -1), table_font),
-                ("FONTSIZE", (0, 1), (-1, -1), 5.5),  # Smaller for data rows
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
-                ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-                ("TOPPADDING", (0, 0), (-1, -1), 1),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-            ]
-        )
-    )
+
+    # Base table styles
+    table_styles = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0d47a1")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("FONTNAME", (0, 0), (-1, 0), table_font_bold),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTNAME", (0, 1), (-1, -1), table_font),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]
+
+    # Preserve the row-color convention from the UI if column exists
+    if "Root Cause (Label)" in safe_df.columns:
+        for row_idx, label in enumerate(safe_df["Root Cause (Label)"].tolist(), start=1):
+            if label == LABEL_DIRECT_IP:
+                table_styles.append(("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#FFCDD2")))
+                table_styles.append(("TEXTCOLOR", (0, row_idx), (-1, row_idx), colors.HexColor("#B71C1C")))
+            elif label == LABEL_NOT_IN_BL:
+                table_styles.append(("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#FFE0B2")))
+                table_styles.append(("TEXTCOLOR", (0, row_idx), (-1, row_idx), colors.HexColor("#E65100")))
+            elif label == LABEL_MATCHED:
+                table_styles.append(("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#BBDEFB")))
+                table_styles.append(("TEXTCOLOR", (0, row_idx), (-1, row_idx), colors.HexColor("#0D47A1")))
+
+    # Fallback alternating backgrounds if no label column
+    else:
+        table_styles.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]))
+
+    table.setStyle(TableStyle(table_styles))
     elements.append(table)
     
     try:

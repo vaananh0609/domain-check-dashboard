@@ -320,9 +320,20 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
     return output.getvalue()
 
 
-def build_pdf_pie_chart(summary: Dict[str, int]) -> Drawing:
-    # Center chart block in a portrait A4 usable area
-    drawing = Drawing(520, 260)
+MM_TO_PT = 2.83465
+LEFT_MARGIN_PT = 32 * MM_TO_PT  # 32mm
+RIGHT_MARGIN_PT = 18 * MM_TO_PT  # 18mm
+TOP_MARGIN_PT = 22 * MM_TO_PT  # 22mm
+BOTTOM_MARGIN_PT = 22 * MM_TO_PT  # 22mm
+
+
+def build_pdf_pie_chart(summary: Dict[str, int], avail_width: float = None) -> Drawing:
+    # Build a drawing sized to available width and center the pie chart inside it
+    if avail_width is None:
+        page_width = A4[0]
+        avail_width = page_width - LEFT_MARGIN_PT - RIGHT_MARGIN_PT
+    drawing_width = max(300, avail_width)
+    drawing = Drawing(drawing_width, 260)
     total = (
         summary.get(STATUS_BLOCKED, 0)
         + summary.get(STATUS_LEAKED, 0)
@@ -330,14 +341,16 @@ def build_pdf_pie_chart(summary: Dict[str, int]) -> Drawing:
     )
 
     if total <= 0:
-        drawing.add(String(135, 130, "Không có dữ liệu để vẽ biểu đồ", fontSize=12, fontName=PDF_FONT_NAME))
+        drawing.add(String(drawing_width / 2 - 100, 130, "Không có dữ liệu để vẽ biểu đồ", fontSize=12, fontName=PDF_FONT_NAME))
         return drawing
 
     pie = Pie()
-    pie.x = 170
-    pie.y = 28
-    pie.width = 190
-    pie.height = 190
+    # center pie inside drawing
+    pie_size = min(240, drawing_width * 0.45)
+    pie.width = pie_size
+    pie.height = pie_size
+    pie.x = (drawing_width - pie_size) / 2
+    pie.y = 20
     pie.data = [summary.get(STATUS_BLOCKED, 0), summary.get(STATUS_LEAKED, 0), summary.get(STATUS_DEAD, 0)]
     pie.labels = [
         f"BLOCKED ({summary.get(STATUS_BLOCKED, 0)})",
@@ -349,7 +362,7 @@ def build_pdf_pie_chart(summary: Dict[str, int]) -> Drawing:
     pie.slices[2].fillColor = colors.HexColor("#CFD8DC")
     pie.slices.strokeWidth = 0.5
     pie.sideLabels = True
-    drawing.add(String(185, 235, "Biểu đồ tỷ lệ trạng thái", fontSize=12, fontName=PDF_FONT_NAME))
+    drawing.add(String(drawing_width / 2 - 80, 235, "Biểu đồ tỷ lệ trạng thái", fontSize=12, fontName=PDF_FONT_NAME))
     drawing.add(pie)
     return drawing
 
@@ -357,7 +370,14 @@ def build_pdf_pie_chart(summary: Dict[str, int]) -> Drawing:
 def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: float) -> bytes:
 
     output = io.BytesIO()
-    doc = SimpleDocTemplate(output, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        rightMargin=RIGHT_MARGIN_PT,
+        leftMargin=LEFT_MARGIN_PT,
+        topMargin=TOP_MARGIN_PT,
+        bottomMargin=BOTTOM_MARGIN_PT,
+    )
     styles = getSampleStyleSheet()
     centered_title_style = ParagraphStyle(
         "CenteredTitle",
@@ -373,7 +393,7 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
         leading=15,
     )
     table_style_font = PDF_FONT_NAME if PDF_FONT_NAME != "Helvetica" else "Helvetica"
-    elements = [Paragraph("Báo cáo Dynamic Live Testing", centered_title_style), Spacer(1, 10)]
+    elements = [Paragraph("BÁO CÁO THỐNG KÊ TRẠNG THÁI CHẶN/LỌC TÊN MIỀN", centered_title_style), Spacer(1, 10)]
 
     info_text = (
         f"Tổng domain: {len(df):,} | BLOCKED: {summary.get(STATUS_BLOCKED, 0):,} | "
@@ -382,12 +402,36 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
     )
     elements.append(Paragraph(info_text, centered_info_style))
     elements.append(Spacer(1, 10))
-    elements.append(build_pdf_pie_chart(summary))
+    # center the pie chart using available width
+    avail_width = A4[0] - LEFT_MARGIN_PT - RIGHT_MARGIN_PT
+    elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
     elements.append(Spacer(1, 14))
 
     max_rows = 1000000
     safe_df = df.head(max_rows).copy()
-    table_data = [safe_df.columns.tolist()] + safe_df.astype(str).values.tolist()
+
+    # Prepare table with Paragraphs to support wrapping and Vietnamese font
+    styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle(
+        "cell",
+        parent=styles["Normal"],
+        fontName=PDF_FONT_NAME,
+        fontSize=8,
+        leading=10,
+    )
+    header_style = ParagraphStyle(
+        "header",
+        parent=styles["Normal"],
+        fontName=PDF_FONT_NAME,
+        fontSize=9,
+        leading=11,
+        alignment=TA_CENTER,
+    )
+
+    headers = [str(h) for h in safe_df.columns]
+    table_data = [[Paragraph(h, header_style) for h in headers]]
+    for _, row in safe_df.iterrows():
+        table_data.append([Paragraph(str(v), cell_style) for v in row.values.tolist()])
 
     if safe_df.empty:
         elements.append(Paragraph("Không có dữ liệu theo State đã chọn để xuất báo cáo.", centered_info_style))
@@ -395,8 +439,22 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
         output.seek(0)
         return output.getvalue()
 
-    # Keep table left aligned as requested; set widths for portrait A4.
-    col_widths = [45, 325, 110]
+    # Auto-fit column widths based on max text length per column
+    num_cols = len(headers)
+    text_max = [0] * num_cols
+    for r in table_data:
+        for i, c in enumerate(r):
+            txt = getattr(c, 'text', str(c))
+            text_max[i] = max(text_max[i], len(txt))
+
+    avail_width = A4[0] - LEFT_MARGIN_PT - RIGHT_MARGIN_PT
+    total = sum(text_max) if sum(text_max) > 0 else num_cols
+    col_widths = []
+    min_w = 40
+    for t in text_max:
+        w = max(min_w, avail_width * (t / total))
+        col_widths.append(w)
+
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table_styles = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0d47a1")),
@@ -406,8 +464,8 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
         ("FONTNAME", (0, 0), (-1, 0), table_style_font),
         ("FONTNAME", (0, 1), (-1, -1), table_style_font),
-        ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTSIZE", (0, 1), (-1, -1), 7),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
     ]
