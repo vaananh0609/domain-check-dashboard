@@ -107,10 +107,7 @@ STATUS_DEAD = "DEAD DOMAIN"
 
 def register_pdf_vietnamese_font() -> bool:
     # Try common system fonts and register under a single name 'VietFont'
-    # Prefer a bundled font in the repo under `fonts/` so public hosts render Vietnamese.
-    repo_local = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "fonts", "NotoSans-Regular.ttf"))
     font_candidates = [
-        repo_local,
         "C:\\Windows\\Fonts\\arial.ttf",
         "C:\\Windows\\Fonts\\times.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -316,10 +313,7 @@ def live_pie_chart(summary: Dict[str, int]):
         title="Tỷ lệ kiểm thử live Gateway",
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
-    try:
-        fig.update_layout(font=dict(family=("VietFont" if viet_font_registered else "Helvetica")), margin=dict(l=10, r=10, t=60, b=10))
-    except Exception:
-        fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+    fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
     return fig
 
 
