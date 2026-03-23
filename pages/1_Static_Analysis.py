@@ -646,7 +646,7 @@ def main():
             info_box = st.empty()
             success_box.success("Validation hoàn tất.")
             info_box.info(f"Đã loại bỏ {duplicate_count:,} dòng log trùng lặp trước khi phân tích.")
-            time.sleep(5)
+            time.sleep(1)
             success_box.empty()
             info_box.empty()
 

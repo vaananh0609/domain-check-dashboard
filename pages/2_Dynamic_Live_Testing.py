@@ -668,7 +668,7 @@ def main():
         st.session_state.live_elapsed_seconds = elapsed_seconds
         success_box = st.empty()
         success_box.success(f"Đã chạy kiểm thử live trực tiếp thành công trong {elapsed_seconds:.2f} giây.")
-        time.sleep(5)
+        time.sleep(1)
         success_box.empty()
 
     if st.session_state.live_df is not None:
