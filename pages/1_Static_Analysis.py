@@ -336,11 +336,14 @@ def to_pdf_bytes_with_chart(df: pd.DataFrame, fig) -> bytes:
         bottomMargin=BOTTOM_MARGIN_PT,
     )
     styles = getSampleStyleSheet()
-    
+
+    # Determine font available in this process
+    bundled_font_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "fonts", "NotoSans-Regular.ttf"))
+    font_in_use = "VietFont" if os.path.exists(bundled_font_path) else ("VietFont" if viet_font_registered else "Helvetica")
+
     # Custom style for Vietnamese text
     title_style = styles["Title"]
-    if viet_font_registered:
-        title_style.fontName = "VietFont"
+    title_style.fontName = font_in_use
     
     elements = [
         Paragraph("BÁO CÁO PHÂN TÍCH DỮ LIỆU TĨNH: ĐỐI SOÁT DANH SÁCH RÒ RỈ", title_style),
@@ -388,14 +391,14 @@ def to_pdf_bytes_with_chart(df: pd.DataFrame, fig) -> bytes:
     cell_style = ParagraphStyle(
         "cell",
         parent=styles["Normal"],
-        fontName=("VietFont" if viet_font_registered else "Helvetica"),
+        fontName=font_in_use,
         fontSize=8,
         leading=10,
     )
     header_style = ParagraphStyle(
         "header",
         parent=styles["Normal"],
-        fontName=("VietFont" if viet_font_registered else "Helvetica-Bold"),
+        fontName=font_in_use,
         fontSize=9,
         leading=11,
         alignment=TA_CENTER,

@@ -336,7 +336,7 @@ TOP_MARGIN_PT = 22 * MM_TO_PT  # 22mm
 BOTTOM_MARGIN_PT = 22 * MM_TO_PT  # 22mm
 
 
-def build_pdf_pie_chart(summary: Dict[str, int], avail_width: float = None) -> Drawing:
+def build_pdf_pie_chart(summary: Dict[str, int], avail_width: float = None, font_name: str = "Helvetica") -> Drawing:
     # Build a drawing sized to available width and center the pie chart inside it
     if avail_width is None:
         page_width = A4[0]
@@ -350,7 +350,7 @@ def build_pdf_pie_chart(summary: Dict[str, int], avail_width: float = None) -> D
     )
 
     if total <= 0:
-        drawing.add(String(drawing_width / 2 - 100, 130, "Không có dữ liệu để vẽ biểu đồ", fontSize=12, fontName=PDF_FONT_NAME))
+        drawing.add(String(drawing_width / 2 - 100, 130, "Không có dữ liệu để vẽ biểu đồ", fontSize=12, fontName=font_name))
         return drawing
 
     pie = Pie()
@@ -360,19 +360,39 @@ def build_pdf_pie_chart(summary: Dict[str, int], avail_width: float = None) -> D
     pie.height = pie_size
     pie.x = (drawing_width - pie_size) / 2
     pie.y = 20
-    pie.data = [summary.get(STATUS_BLOCKED, 0), summary.get(STATUS_LEAKED, 0), summary.get(STATUS_DEAD, 0)]
-    pie.labels = [
-        f"BLOCKED ({summary.get(STATUS_BLOCKED, 0)})",
-        f"LEAKED ({summary.get(STATUS_LEAKED, 0)})",
-        f"DEAD DOMAIN ({summary.get(STATUS_DEAD, 0)})",
-    ]
+    values = [summary.get(STATUS_BLOCKED, 0), summary.get(STATUS_LEAKED, 0), summary.get(STATUS_DEAD, 0)]
+    pie.data = values
+    # remove built-in labels; we'll draw labels with Strings using the registered font to ensure Vietnamese glyphs
+    pie.labels = ["", "", ""]
     pie.slices[0].fillColor = colors.HexColor("#A5D6A7")
     pie.slices[1].fillColor = colors.HexColor("#FFCDD2")
     pie.slices[2].fillColor = colors.HexColor("#CFD8DC")
     pie.slices.strokeWidth = 0.5
-    pie.sideLabels = True
-    drawing.add(String(drawing_width / 2 - 80, 235, "Biểu đồ tỷ lệ trạng thái", fontSize=12, fontName=PDF_FONT_NAME))
+    drawing.add(String(drawing_width / 2 - 80, 235, "Biểu đồ tỷ lệ trạng thái", fontSize=12, fontName=font_name))
     drawing.add(pie)
+
+    # Draw custom labels positioned around the pie using font_name
+    try:
+        cx = pie.x + pie.width / 2
+        cy = pie.y + pie.height / 2
+        radius = min(pie.width, pie.height) / 2
+        start_angle = 0.0
+        labels = [f"BLOCKED ({values[0]})", f"LEAKED ({values[1]})", f"DEAD DOMAIN ({values[2]})"]
+        for val, lbl in zip(values, labels):
+            if total <= 0 or val <= 0:
+                angle = start_angle
+            else:
+                angle = start_angle + (val / total) * 360.0 / 2.0
+            # convert angle to radians; ReportLab 0 degrees is at 3 o'clock and increases clockwise
+            import math
+
+            rad = math.radians(-angle + 90)
+            lx = cx + (radius + 20) * math.cos(rad)
+            ly = cy + (radius + 20) * math.sin(rad)
+            drawing.add(String(lx, ly, lbl, fontSize=9, fontName=font_name))
+            start_angle += (val / total) * 360.0 if total > 0 else 0
+    except Exception:
+        pass
     return drawing
 
 
@@ -398,20 +418,24 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
         bottomMargin=BOTTOM_MARGIN_PT,
     )
     styles = getSampleStyleSheet()
+    # Determine the font actually available in this process
+    bundled_font_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "fonts", "NotoSans-Regular.ttf"))
+    font_in_use = "VietFont" if os.path.exists(bundled_font_path) else PDF_FONT_NAME
+
     centered_title_style = ParagraphStyle(
         "CenteredTitle",
         parent=styles["Title"],
-        fontName=PDF_FONT_NAME,
+        fontName=font_in_use,
         alignment=TA_CENTER,
     )
     centered_info_style = ParagraphStyle(
         "CenteredInfo",
         parent=styles["Normal"],
-        fontName=PDF_FONT_NAME,
+        fontName=font_in_use,
         alignment=TA_CENTER,
         leading=15,
     )
-    table_style_font = PDF_FONT_NAME if PDF_FONT_NAME != "Helvetica" else "Helvetica"
+    table_style_font = font_in_use if font_in_use != "Helvetica" else "Helvetica"
     elements = [Paragraph("BÁO CÁO THỐNG KÊ TRẠNG THÁI CHẶN/LỌC TÊN MIỀN", centered_title_style), Spacer(1, 10)]
 
     info_text = (
@@ -423,7 +447,7 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
     elements.append(Spacer(1, 10))
     # center the pie chart using available width
     avail_width = A4[0] - LEFT_MARGIN_PT - RIGHT_MARGIN_PT
-    elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
+    elements.append(build_pdf_pie_chart(summary, avail_width=avail_width, font_name=font_in_use))
     elements.append(Spacer(1, 14))
 
     max_rows = 1000000
@@ -434,14 +458,14 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
     cell_style = ParagraphStyle(
         "cell",
         parent=styles["Normal"],
-        fontName=PDF_FONT_NAME,
+        fontName=font_in_use,
         fontSize=8,
         leading=10,
     )
     header_style = ParagraphStyle(
         "header",
         parent=styles["Normal"],
-        fontName=PDF_FONT_NAME,
+        fontName=font_in_use,
         fontSize=9,
         leading=11,
         alignment=TA_CENTER,
