@@ -23,6 +23,62 @@ with st.sidebar:
     st.page_link("pages/1_Static_Analysis.py", label="Static Analysis", icon="📊")
     st.page_link("pages/2_Dynamic_Live_Testing.py", label="Dynamic Live Testing", icon="🌐")
 
+st.markdown(
+    """
+<style>
+[data-testid="stSidebar"] {
+    background: linear-gradient(160deg, #0f3d66 0%, #155c8f 55%, #1f8ca8 100%);
+    border-right: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+[data-testid="stSidebar"] .stMarkdown h3 {
+    color: #f4fbff;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+
+[data-testid="stSidebar"] a {
+    color: #eaf6ff !important;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 10px;
+    padding: 0.42rem 0.65rem;
+    margin: 0.22rem 0;
+    text-decoration: none !important;
+    transition: all 0.18s ease-in-out;
+}
+
+[data-testid="stSidebar"] a p,
+[data-testid="stSidebar"] a span,
+[data-testid="stSidebar"] [data-testid="stPageLink"] p,
+[data-testid="stSidebar"] [data-testid="stPageLink"] span {
+    color: #ffffff !important;
+}
+
+[data-testid="stSidebar"] a:hover {
+    background: rgba(255, 255, 255, 0.28);
+    color: #ffffff !important;
+    transform: translateX(2px);
+}
+
+[data-testid="stSidebar"] a[aria-current="page"] {
+    background: #ffffff;
+    color: #0f4c81 !important;
+    font-weight: 700;
+    border-color: #ffffff;
+    box-shadow: 0 5px 16px rgba(0, 0, 0, 0.15);
+}
+
+[data-testid="stSidebar"] a[aria-current="page"] p,
+[data-testid="stSidebar"] a[aria-current="page"] span {
+    color: #0f4c81 !important;
+    font-weight: 700;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 try:
     aggrid_module = importlib.import_module("st_aggrid")
     aggrid_shared_module = importlib.import_module("st_aggrid.shared")
