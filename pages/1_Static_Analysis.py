@@ -117,26 +117,65 @@ IPV4_REGEX = re.compile(
     r"\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$"
 )
 
-# Register Unicode font for Vietnamese support
-try:
-    # Try to register DejaVuSans or Arial for Vietnamese support
-    font_candidates = [
-        ("C:\\Windows\\Fonts\\arial.ttf", "VietFont"),
-        ("C:\\Windows\\Fonts\\times.ttf", "VietFont"),
-        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "VietFont"),
-        ("/System/Library/Fonts/DejaVuSans.ttf", "VietFont"),
-    ]
-    viet_font_registered = False
-    for font_path, font_name in font_candidates:
-        if os.path.exists(font_path):
+# Register Unicode font for Vietnamese support.
+# Attempt to download a reliable Unicode font (Noto Sans) into repo/fonts,
+# then register it under the name 'VietFont'. Fall back to common system fonts.
+def ensure_local_viet_font() -> bool:
+    font_url = (
+        "https://github.com/googlefonts/noto-fonts/raw/main/phaseIII_only/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
+    )
+    try:
+        base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+        fonts_dir = os.path.join(base_dir, "fonts")
+        os.makedirs(fonts_dir, exist_ok=True)
+        local_path = os.path.join(fonts_dir, "NotoSans-Regular.ttf")
+
+        # If already downloaded, register and return
+        if os.path.exists(local_path):
             try:
-                pdfmetrics.registerFont(TTFont(font_name, font_path))
-                viet_font_registered = True
-                break
+                pdfmetrics.registerFont(TTFont("VietFont", local_path))
+                return True
             except Exception:
                 pass
-except Exception:
-    viet_font_registered = False
+
+        # Try downloading the font
+        try:
+            import requests
+
+            resp = requests.get(font_url, timeout=20)
+            if resp.status_code == 200 and resp.content:
+                with open(local_path, "wb") as f:
+                    f.write(resp.content)
+                try:
+                    pdfmetrics.registerFont(TTFont("VietFont", local_path))
+                    return True
+                except Exception:
+                    return False
+        except Exception:
+            # network/download failed
+            pass
+    except Exception:
+        pass
+
+    # Fallback: try common system fonts
+    font_candidates = [
+        ("C:\\Windows\\Fonts\\arial.ttf"),
+        ("C:\\Windows\\Fonts\\times.ttf"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        ("/System/Library/Fonts/DejaVuSans.ttf"),
+    ]
+    for font_path in font_candidates:
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont("VietFont", font_path))
+                return True
+            except Exception:
+                continue
+
+    return False
+
+
+viet_font_registered = ensure_local_viet_font()
 
 
 def iter_clean_lines(uploaded_file) -> List[str]:
@@ -282,7 +321,14 @@ def pie_chart(summary: Dict[str, int]):
         title="Tỷ lệ phân loại nguyên nhân lọt",
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
-    fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+    # Prefer the downloaded Noto Sans if available for chart labels
+    try:
+        if viet_font_registered:
+            fig.update_layout(margin=dict(l=10, r=10, t=60, b=10), font_family="Noto Sans")
+        else:
+            fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
+    except Exception:
+        fig.update_layout(margin=dict(l=10, r=10, t=60, b=10))
     return fig
 
 
