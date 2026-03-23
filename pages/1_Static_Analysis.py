@@ -317,6 +317,16 @@ def fig_to_png_bytes(fig) -> bytes | None:
 
 def to_pdf_bytes_with_chart(df: pd.DataFrame, fig) -> bytes:
     output = io.BytesIO()
+    # Ensure bundled font is registered at PDF generation time
+    try:
+        bundled_font_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "fonts", "NotoSans-Regular.ttf"))
+        if os.path.exists(bundled_font_path):
+            try:
+                pdfmetrics.registerFont(TTFont("VietFont", bundled_font_path))
+            except Exception:
+                pass
+    except Exception:
+        pass
     doc = SimpleDocTemplate(
         output,
         pagesize=A4,

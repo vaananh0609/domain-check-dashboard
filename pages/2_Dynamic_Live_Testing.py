@@ -321,20 +321,6 @@ def live_pie_chart(summary: Dict[str, int]):
     return fig
 
 
-def fig_to_png_bytes(fig) -> bytes | None:
-    try:
-        img_bytes = fig.to_image(format="png")
-        return img_bytes
-    except Exception:
-        try:
-            buf = io.BytesIO()
-            fig.write_image(buf, format="png")
-            buf.seek(0)
-            return buf.read()
-        except Exception:
-            return None
-
-
 def to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -393,6 +379,16 @@ def build_pdf_pie_chart(summary: Dict[str, int], avail_width: float = None) -> D
 def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: float) -> bytes:
 
     output = io.BytesIO()
+    # Ensure bundled font is registered at PDF generation time (helps on hosted servers)
+    try:
+        bundled_font_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "fonts", "NotoSans-Regular.ttf"))
+        if os.path.exists(bundled_font_path):
+            try:
+                pdfmetrics.registerFont(TTFont("VietFont", bundled_font_path))
+            except Exception:
+                pass
+    except Exception:
+        pass
     doc = SimpleDocTemplate(
         output,
         pagesize=A4,
@@ -425,23 +421,9 @@ def to_pdf_bytes(df: pd.DataFrame, summary: Dict[str, int], elapsed_seconds: flo
     )
     elements.append(Paragraph(info_text, centered_info_style))
     elements.append(Spacer(1, 10))
-    # embed the Plotly pie chart as PNG (ensures Plotly uses registered font)
+    # center the pie chart using available width
     avail_width = A4[0] - LEFT_MARGIN_PT - RIGHT_MARGIN_PT
-    fig = live_pie_chart(summary)
-    img = fig_to_png_bytes(fig)
-    if img:
-        try:
-            img_buf = io.BytesIO(img)
-            img_width = avail_width * 0.9
-            rl_img = RLImage(img_buf, width=img_width, height=3 * inch)
-            rl_img.hAlign = "CENTER"
-            elements.append(rl_img)
-            elements.append(Spacer(1, 12))
-        except Exception:
-            # fallback to vector drawing if image embedding fails
-            elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
-    else:
-        elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
+    elements.append(build_pdf_pie_chart(summary, avail_width=avail_width))
     elements.append(Spacer(1, 14))
 
     max_rows = 1000000
