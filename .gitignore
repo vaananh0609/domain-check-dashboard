@@ -9,3 +9,10 @@ venv/
 # File tạm / export tay (không thuộc mã nguồn)
 tmp_*.txt
 output-*.csv
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
