@@ -5,3 +5,7 @@ __pycache__/
 env/
 venv/
 *.egg-info/
+
+# File tạm / export tay (không thuộc mã nguồn)
+tmp_*.txt
+output-*.csv

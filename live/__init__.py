@@ -1,0 +1,55 @@
+"""Kiểm thử live Gateway — tách module theo trạng thái và chức năng."""
+
+from .plotly_charts import live_pie_chart
+from .constants import (
+    ASYNC_CONCURRENCY,
+    BACKOFF_BASE_SECONDS,
+    COL_CHAIN,
+    COL_DNS,
+    COL_FINAL_URL,
+    COL_FINAL_VI,
+    COL_HTTP,
+    COL_NET,
+    COL_ORIGINAL,
+    DNS_TIMEOUT_SECONDS,
+    EXPECTED_GUEST_IP,
+    HTTP_RETRIES,
+    PREFLIGHT_TIMEOUT_SECONDS,
+    PUBLIC_DNS_SERVERS,
+    STATUS_BLOCKED,
+    STATUS_DEAD,
+    STATUS_LEAKED,
+    STATUS_PARKED,
+)
+from .dns import detect_public_ip_async, run_network_preflight
+from .parsing import normalize_target, parse_dns_servers, read_uploaded_text_lines
+from .runner import RESULT_DF_COLUMNS, run_live_test_from_lines_async
+
+__all__ = [
+    "ASYNC_CONCURRENCY",
+    "BACKOFF_BASE_SECONDS",
+    "COL_CHAIN",
+    "COL_DNS",
+    "COL_FINAL_URL",
+    "COL_FINAL_VI",
+    "COL_HTTP",
+    "COL_NET",
+    "COL_ORIGINAL",
+    "DNS_TIMEOUT_SECONDS",
+    "EXPECTED_GUEST_IP",
+    "HTTP_RETRIES",
+    "PREFLIGHT_TIMEOUT_SECONDS",
+    "PUBLIC_DNS_SERVERS",
+    "STATUS_BLOCKED",
+    "STATUS_DEAD",
+    "STATUS_LEAKED",
+    "STATUS_PARKED",
+    "detect_public_ip_async",
+    "live_pie_chart",
+    "normalize_target",
+    "parse_dns_servers",
+    "read_uploaded_text_lines",
+    "RESULT_DF_COLUMNS",
+    "run_live_test_from_lines_async",
+    "run_network_preflight",
+]
