@@ -1,8 +1,9 @@
-from typing import Optional
+import asyncio
+from typing import Any, Optional
 from urllib.parse import urlsplit
 
-import aiohttp
-import asyncio
+from curl_cffi.requests import AsyncSession
+from curl_cffi.requests.errors import RequestsError
 
 from .constants import BACKOFF_BASE_SECONDS, HTTP_RETRIES, USER_AGENT
 
@@ -19,29 +20,31 @@ def extract_host_and_urls(raw_target: str) -> tuple[str, list[str]]:
     else:
         parsed = urlsplit(f"//{original}")
         host = parsed.hostname or parsed.netloc or ""
-        urls = [f"https://{original}"]
+        urls = [f"https://{original}", f"http://{original}"]
 
     return host.strip().rstrip("."), urls
 
 
-def _format_redirect_chain(start_url: str, response) -> str:
-    if not response.history:
-        return f"{start_url} → HTTP {response.status} → {response.url}"
+def _format_redirect_chain(start_url: str, response: Any) -> str:
+    history = getattr(response, "history", None) or []
+    if not history:
+        return f"{start_url} → HTTP {response.status_code} → {response.url}"
     parts: list[str] = [start_url]
-    for h in response.history:
-        parts.append(f"→ HTTP {h.status} →")
+    for h in history:
+        parts.append(f"→ HTTP {h.status_code} →")
         parts.append(str(h.url))
-    parts.append(f"→ HTTP {response.status} →")
+    parts.append(f"→ HTTP {response.status_code} →")
     parts.append(str(response.url))
     return " ".join(parts)
 
 
-def _history_urls_from_response(response) -> list[str]:
-    return [str(item.url) for item in response.history]
+def _history_urls_from_response(response: Any) -> list[str]:
+    history = getattr(response, "history", None) or []
+    return [str(item.url) for item in history]
 
 
 async def send_live_request(
-    session: aiohttp.ClientSession,
+    session: AsyncSession,
     url: str,
     timeout: int,
     proxy_url: Optional[str] = None,
@@ -49,37 +52,31 @@ async def send_live_request(
     retries: int = HTTP_RETRIES,
     backoff_base: float = BACKOFF_BASE_SECONDS,
 ) -> tuple[int, str, list[str], str, str]:
-    req_timeout = aiohttp.ClientTimeout(total=timeout, connect=min(10, timeout), sock_read=timeout)
+    kwargs: dict = {
+        "timeout": timeout,
+        "allow_redirects": follow_redirects,
+        "impersonate": "chrome",
+        "verify": False,
+        "headers": {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.google.com/",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
+    }
+    if proxy_url:
+        kwargs["proxy"] = proxy_url
 
     for attempt in range(retries + 1):
         try:
-            async with session.get(
-                url,
-                timeout=req_timeout,
-                ssl=False,
-                allow_redirects=follow_redirects,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Referer": "https://www.google.com/",
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-User": "?1",
-                    "Sec-Fetch-Dest": "document",
-                    "sec-ch-ua": '"Chromium";v="126", "Not A(Brand";v="99", "Google Chrome";v="126"',
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"Windows"',
-                },
-                proxy=proxy_url,
-            ) as response:
-                body = await response.text(errors="ignore")
-                history_urls = _history_urls_from_response(response)
-                chain = _format_redirect_chain(url, response)
-                return response.status, str(response.url), history_urls, chain, body
-        except (asyncio.TimeoutError, aiohttp.ClientConnectionError, aiohttp.ClientError):
+            response = await session.get(url, **kwargs)
+            body = response.text if response.text is not None else ""
+            history_urls = _history_urls_from_response(response)
+            chain = _format_redirect_chain(url, response)
+            return response.status_code, str(response.url), history_urls, chain, body
+        except (asyncio.TimeoutError, TimeoutError, RequestsError, OSError, ConnectionError):
             if attempt >= retries:
                 raise
             await asyncio.sleep(backoff_base * (2**attempt))

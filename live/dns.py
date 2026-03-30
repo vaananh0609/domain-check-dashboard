@@ -3,7 +3,7 @@ import ipaddress
 import socket
 
 import aiodns
-import aiohttp
+from curl_cffi.requests import AsyncSession
 
 def _normalize_ip(ip: str) -> str:
     ip = (ip or "").strip()
@@ -14,8 +14,6 @@ def _normalize_ip(ip: str) -> str:
     except ValueError:
         return ip
 
-
-# Một phần dải IPv4 công bố của Cloudflare (edge) — gợi ý WAF/bot khi timeout.
 
 def _map_dns_exception(ex: Exception) -> str:
     if isinstance(ex, asyncio.TimeoutError):
@@ -39,9 +37,7 @@ async def resolve_a_records(
     *,
     prefer_os_getaddrinfo: bool = True,
 ) -> tuple[str, list[str]]:
-    # Chỉ dùng getaddrinfo khi cần mô phỏng “mạng máy” (resolver mặc định).
-    # Với resolver chỉ định nameserver (vd. 8.8.8.8), bắt buộc dùng query — nếu không
-    # nhánh public sẽ luôn trùng OS resolver và so sánh local vs public DNS sai.
+    # public resolver: luôn query (không getaddrinfo) để khác OS
     if prefer_os_getaddrinfo:
         try:
             loop = asyncio.get_running_loop()
@@ -105,7 +101,6 @@ def _merge_dns_rcode_no_ips(ra: str, r6: str) -> str:
     return ra if ra != "NOERROR" else r6
 
 
-# RFC1918 + loopback — ISP VN hay trả khi sinkhole / redirect nội bộ (so với bản ghi public).
 _RFC1918_NETS = (
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -114,7 +109,7 @@ _RFC1918_NETS = (
 
 
 def _is_junk_sinkhole_ip(ip: str) -> bool:
-    """IP rác / nội bộ (0, 127/8, RFC1918, ::1) — dùng so với bản ghi public."""
+    # 0/127/RFC1918/::1 — so với public
     n = _normalize_ip(ip)
     if not n:
         return False
@@ -138,9 +133,6 @@ async def resolve_a_and_aaaa_with_rcodes(
     *,
     prefer_os_getaddrinfo: bool = True,
 ) -> tuple[str, list[str], str, str]:
-    """
-    Gộp A + AAAA; trả thêm rcode A và AAAA để phân loại DEAD (chỉ khi cả hai đều NXDOMAIN).
-    """
     (ra, ia), (r6, i6) = await asyncio.gather(
         resolve_a_records(domain, resolver, dns_timeout, prefer_os_getaddrinfo=prefer_os_getaddrinfo),
         resolve_aaaa_records(domain, resolver, dns_timeout, prefer_os_getaddrinfo=prefer_os_getaddrinfo),
@@ -160,9 +152,6 @@ async def resolve_a_and_aaaa(
     *,
     prefer_os_getaddrinfo: bool = True,
 ) -> tuple[str, list[str]]:
-    """
-    Gộp A + AAAA (IPv4/IPv6) cho cùng resolver — so sánh Local vs Public đầy đủ.
-    """
     rcode, ips, _ra, _r6 = await resolve_a_and_aaaa_with_rcodes(
         domain, resolver, dns_timeout, prefer_os_getaddrinfo=prefer_os_getaddrinfo
     )
@@ -177,12 +166,6 @@ async def resolve_ns_records(domain: str, resolver: aiodns.DNSResolver, dns_time
         return []
 
 
-def is_parked_by_dns(ns_hosts: list[str]) -> bool:
-    from .constants import PARKED_DNS_HINTS
-
-    return any(any(hint in ns for hint in PARKED_DNS_HINTS) for ns in ns_hosts)
-
-
 def detect_dns_sinkhole(local_ips: list[str], public_ips: list[str]) -> bool:
     if not public_ips:
         return False
@@ -195,7 +178,7 @@ def detect_dns_sinkhole(local_ips: list[str], public_ips: list[str]) -> bool:
 
 
 def detect_dns_sparse_local(local_ips: list[str], public_ips: list[str]) -> bool:
-    """Gợi ý can thiệp: local chỉ 1 IP trong khi public có ≥2 (thường gặp với CDN)."""
+    # gợi ý: local 1 IP, public ≥2
     local_set = {_normalize_ip(x) for x in local_ips if x}
     public_set = {_normalize_ip(x) for x in public_ips if x}
     return len(local_set) == 1 and len(public_set) >= 2
@@ -212,11 +195,15 @@ async def detect_public_ip_async(timeout: int = 5) -> str:
         pass
 
     try:
-        req_timeout = aiohttp.ClientTimeout(total=timeout)
-        async with aiohttp.ClientSession(timeout=req_timeout) as session:
-            async with session.get("https://api.ipify.org", ssl=False) as response:
-                if response.status < 400:
-                    return (await response.text()).strip()
+        async with AsyncSession() as session:
+            r = await session.get(
+                "https://api.ipify.org",
+                timeout=timeout,
+                verify=False,
+                impersonate="chrome",
+            )
+            if r.status_code < 400:
+                return (r.text or "").strip()
     except Exception:
         pass
 
@@ -245,10 +232,14 @@ async def run_network_preflight(dns_servers: list[str], dns_timeout: int, timeou
         diagnostics["public_dns"] = "FAIL"
 
     try:
-        req_timeout = aiohttp.ClientTimeout(total=timeout, connect=min(3, timeout), sock_read=timeout)
-        async with aiohttp.ClientSession(timeout=req_timeout) as session:
-            async with session.get("https://example.com", ssl=False) as response:
-                diagnostics["http"] = "OK" if response.status < 500 else f"HTTP_{response.status}"
+        async with AsyncSession() as session:
+            r = await session.get(
+                "https://example.com",
+                timeout=timeout,
+                verify=False,
+                impersonate="chrome",
+            )
+            diagnostics["http"] = "OK" if r.status_code < 500 else f"HTTP_{r.status_code}"
     except Exception:
         diagnostics["http"] = "FAIL"
 

@@ -1,5 +1,3 @@
-"""Giao diện web (FastAPI) cho Dynamic Live Testing — thay thế Streamlit."""
-
 from __future__ import annotations
 
 import asyncio
@@ -37,7 +35,6 @@ from dynamic_live_core import (
     STATUS_BLOCKED,
     STATUS_DEAD,
     STATUS_LEAKED,
-    STATUS_PARKED,
     ASYNC_CONCURRENCY,
     BACKOFF_BASE_SECONDS,
     detect_public_ip_async,
@@ -65,7 +62,7 @@ EXPORT_COLUMN_DEFS: list[dict[str, str]] = [
 ]
 EXPORT_SLUG_TO_KEY = {d["slug"]: d["key"] for d in EXPORT_COLUMN_DEFS}
 
-# Mặc định form: timeout HTTP (giây); luôn Playwright, không proxy — xem _prepare_live_run
+# Mặc định form: timeout HTTP (giây); không proxy — xem _prepare_live_run
 DEFAULT_UI_HTTP_TIMEOUT = 10
 
 _INVALID_UPLOAD_STEM_CHARS = frozenset('<>:"/\\|?*\n\r\t')
@@ -152,7 +149,6 @@ def status_row_class(status: str) -> str:
     return {
         STATUS_BLOCKED: "blocked",
         STATUS_LEAKED: "leaked",
-        STATUS_PARKED: "parked",
         STATUS_DEAD: "dead",
     }.get(status, "")
 
@@ -256,6 +252,7 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
         "current_public_ip": current_public_ip,
         "preflight_timeout_seconds": preflight_timeout_seconds,
     }
+
     return params, None, defaults
 
 
@@ -303,7 +300,6 @@ async def run_live(request: Request):
         max_domains=int(params["max_domains"]),
         proxy_url=None,
         follow_redirects=True,
-        use_playwright=True,
         concurrency=int(params["concurrency"]),
         dns_timeout=int(params["dns_timeout_seconds"]),
         retries=int(params["retries"]),
@@ -356,7 +352,6 @@ async def run_live_stream(request: Request):
                     max_domains=int(params["max_domains"]),
                     proxy_url=None,
                     follow_redirects=True,
-                    use_playwright=True,
                     concurrency=int(params["concurrency"]),
                     dns_timeout=int(params["dns_timeout_seconds"]),
                     retries=int(params["retries"]),
@@ -435,12 +430,11 @@ async def _results_template_context(request: Request, result_id: str, q: str = "
     summary = {
         STATUS_BLOCKED: int((df["Trạng_Thái"] == STATUS_BLOCKED).sum()),
         STATUS_LEAKED: int((df["Trạng_Thái"] == STATUS_LEAKED).sum()),
-        STATUS_PARKED: int((df["Trạng_Thái"] == STATUS_PARKED).sum()),
         STATUS_DEAD: int((df["Trạng_Thái"] == STATUS_DEAD).sum()),
     }
     filtered = _filter_df_by_search(df, q)
     chart_div = _plotly_div(summary)
-    state_options = ["ALL", STATUS_BLOCKED, STATUS_LEAKED, STATUS_PARKED, STATUS_DEAD]
+    state_options = ["ALL", STATUS_BLOCKED, STATUS_LEAKED, STATUS_DEAD]
     return {
         "request": request,
         "result_id": result_id,

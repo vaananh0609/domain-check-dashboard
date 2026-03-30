@@ -3,7 +3,7 @@ from typing import Dict
 import pandas as pd
 import plotly.express as px
 
-from .constants import STATUS_BLOCKED, STATUS_DEAD, STATUS_LEAKED, STATUS_PARKED
+from .constants import STATUS_BLOCKED, STATUS_DEAD, STATUS_LEAKED
 
 
 def live_pie_chart(summary: Dict[str, int]):
@@ -11,7 +11,6 @@ def live_pie_chart(summary: Dict[str, int]):
     color_map = {
         STATUS_BLOCKED: "#2e7d32",
         STATUS_LEAKED: "#c62828",
-        STATUS_PARKED: "#fbc02d",
         STATUS_DEAD: "#9e9e9e",
     }
 

@@ -1,5 +1,3 @@
-"""Kiểm thử live Gateway — tách module theo trạng thái và chức năng."""
-
 from .plotly_charts import live_pie_chart
 from .constants import (
     ASYNC_CONCURRENCY,
@@ -19,7 +17,6 @@ from .constants import (
     STATUS_BLOCKED,
     STATUS_DEAD,
     STATUS_LEAKED,
-    STATUS_PARKED,
 )
 from .dns import detect_public_ip_async, run_network_preflight
 from .parsing import normalize_target, parse_dns_servers, read_uploaded_text_lines
@@ -43,7 +40,6 @@ __all__ = [
     "STATUS_BLOCKED",
     "STATUS_DEAD",
     "STATUS_LEAKED",
-    "STATUS_PARKED",
     "detect_public_ip_async",
     "live_pie_chart",
     "normalize_target",

@@ -28,7 +28,6 @@
       <div class="metric-card metric-card--total"><div class="label">Tổng domain</div><div class="value">{{ "{:,}".format(total_rows) }}</div></div>
       <div class="metric-card metric-card--blocked"><div class="label">Blocked by Gateway</div><div class="value">{{ summary.get('BLOCKED', 0) }}</div></div>
       <div class="metric-card metric-card--leaked"><div class="label">Leaked</div><div class="value">{{ summary.get('LEAKED', 0) }}</div></div>
-      <div class="metric-card metric-card--parked"><div class="label">Parked / No Content</div><div class="value">{{ summary.get('PARKED / NO CONTENT', 0) }}</div></div>
       <div class="metric-card metric-card--dead"><div class="label">Dead Domains</div><div class="value">{{ summary.get('DEAD DOMAIN', 0) }}</div></div>
     </div>
 

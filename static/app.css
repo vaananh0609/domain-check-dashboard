@@ -271,14 +271,6 @@ input:disabled {
   color: #b71c1c;
 }
 
-.metric-card--parked {
-  background: linear-gradient(135deg, #fffde7 0%, #fff9c4 100%);
-  border-color: #ffee58;
-}
-.metric-card--parked .value {
-  color: #f57f17;
-}
-
 .metric-card--dead {
   background: linear-gradient(135deg, #eceff1 0%, #cfd8dc 100%);
   border-color: #90a4ae;
@@ -354,11 +346,6 @@ tr.row-blocked td {
 tr.row-leaked td {
   background: #ffcdd2;
   color: #b71c1c;
-}
-
-tr.row-parked td {
-  background: #fff59d;
-  color: #f57f17;
 }
 
 tr.row-dead td {

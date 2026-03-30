@@ -59,7 +59,6 @@ def parse_dns_servers(raw_value: str) -> list[str]:
 
 
 def browse_url_for_cell(text: str) -> str:
-    """URL để mở trong trình duyệt từ nội dung ô Tên miền/IP gốc."""
     if not text or not str(text).strip():
         return ""
     t = str(text).strip().splitlines()[0].strip()

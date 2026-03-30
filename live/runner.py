@@ -2,9 +2,9 @@ import asyncio
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-import aiohttp
 import aiodns
 import pandas as pd
+from curl_cffi.requests import AsyncSession
 
 from .classify import classify_live_domain
 from .constants import (
@@ -60,7 +60,6 @@ async def run_live_test_from_lines_async(
     max_domains: int,
     proxy_url: Optional[str] = None,
     follow_redirects: bool = True,
-    use_playwright: bool = True,
     concurrency: int = ASYNC_CONCURRENCY,
     dns_timeout: int = DNS_TIMEOUT_SECONDS,
     retries: int = HTTP_RETRIES,
@@ -87,20 +86,8 @@ async def run_live_test_from_lines_async(
     active_public_dns = public_dns_servers or PUBLIC_DNS_SERVERS
     resolver = aiodns.DNSResolver(timeout=dns_timeout, tries=1)
     public_resolver = aiodns.DNSResolver(nameservers=active_public_dns, timeout=dns_timeout, tries=1)
-    http_resolver = aiohttp.resolver.ThreadedResolver()
-    connector = aiohttp.TCPConnector(
-        limit=concurrency,
-        limit_per_host=concurrency,
-        resolver=http_resolver,
-    )
-    public_http_resolver = aiohttp.AsyncResolver(nameservers=active_public_dns)
-    public_connector = aiohttp.TCPConnector(
-        limit=concurrency,
-        limit_per_host=concurrency,
-        resolver=public_http_resolver,
-    )
 
-    async with aiohttp.ClientSession(connector=connector) as session, aiohttp.ClientSession(connector=public_connector) as public_session:
+    async with AsyncSession() as session:
         async def process_one(idx: int, original_label: str, domain: str) -> tuple[int, dict[str, str | int]]:
             async with semaphore:
                 try:
@@ -110,11 +97,9 @@ async def run_live_test_from_lines_async(
                         session=session,
                         resolver=resolver,
                         public_resolver=public_resolver,
-                        public_session=public_session,
                         timeout=timeout,
                         proxy_url=proxy_url,
                         follow_redirects=follow_redirects,
-                        use_playwright=use_playwright,
                         dns_timeout=dns_timeout,
                         retries=retries,
                         backoff_base=backoff_base,

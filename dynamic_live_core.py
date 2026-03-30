@@ -1,7 +1,4 @@
-"""
-Facade tương thích ngược: `web_app` import từ đây.
-Logic thực nằm trong package `live/`.
-"""
+# Re-export cho web_app (logic trong package live).
 
 from live import (
     ASYNC_CONCURRENCY,
@@ -21,7 +18,6 @@ from live import (
     STATUS_BLOCKED,
     STATUS_DEAD,
     STATUS_LEAKED,
-    STATUS_PARKED,
     RESULT_DF_COLUMNS,
     detect_public_ip_async,
     live_pie_chart,
@@ -50,7 +46,6 @@ __all__ = [
     "STATUS_BLOCKED",
     "STATUS_DEAD",
     "STATUS_LEAKED",
-    "STATUS_PARKED",
     "RESULT_DF_COLUMNS",
     "detect_public_ip_async",
     "live_pie_chart",
