@@ -15,11 +15,11 @@
     <div>
       <div class="field">
         <label for="timeout_seconds">Timeout HTTP (giây)</label>
-        <input id="timeout_seconds" name="timeout_seconds" type="number" min="5" max="60" value="10" />
+        <input id="timeout_seconds" name="timeout_seconds" type="number" min="5" max="60" value="{{ form_http_timeout|default(10) }}" />
       </div>
       <div class="field">
         <label for="max_domains">Số domain cần test</label>
-        <input id="max_domains" name="max_domains" type="number" min="1" max="10000" value="1000" />
+        <input id="max_domains" name="max_domains" type="number" min="1" max="10000" value="{{ form_max_domains|default(1000) }}" />
       </div>
     </div>
   </div>
@@ -61,7 +61,8 @@
   <button type="button" id="live-run-btn" class="btn-primary">Run Live Testing</button>
 </form>
 
-<script type="application/json" id="live-col-order">{{ ['STT', COL_ORIGINAL, COL_FINAL_VI, COL_HTTP, COL_CHAIN, COL_FINAL_URL, COL_DNS, COL_NET] | tojson }}</script>
+<script type="application/json" id="live-col-order">{{ ['STT', COL_ORIGINAL, COL_FINAL_VI, COL_HTTP, COL_CHAIN, COL_FINAL_URL, COL_DNS, COL_DETAIL] | tojson }}</script>
+<script type="application/json" id="live-col-td-classes">{{ ['dt-stt', 'dt-fill', 'dt-status', 'dt-http', 'dt-fill', 'dt-fill', 'dt-fill', 'dt-fill'] | tojson }}</script>
 
 <div id="live-stream-wrap" class="live-stream-wrap" hidden>
   <h3 class="live-stream-title">Đang chạy kiểm thử</h3>
@@ -71,17 +72,17 @@
   </div>
   <p class="live-stream-hint small">Kết quả hiển thị theo thứ tự hoàn thành (không phải STT). Khi xong sẽ chuyển trang kết quả đầy đủ.</p>
   <div class="table-wrap live-stream-table-wrap">
-    <table class="data-table" id="live-stream-table">
+    <table class="data-table data-table--fixed-cols" id="live-stream-table">
       <thead>
         <tr>
-          <th>STT</th>
-          <th>{{ COL_ORIGINAL }}</th>
-          <th>{{ COL_FINAL_VI }}</th>
-          <th>{{ COL_HTTP }}</th>
-          <th>{{ COL_CHAIN }}</th>
-          <th>{{ COL_FINAL_URL }}</th>
-          <th>{{ COL_DNS }}</th>
-          <th>{{ COL_NET }}</th>
+          <th class="dt-stt">STT</th>
+          <th class="dt-fill">{{ COL_ORIGINAL }}</th>
+          <th class="dt-status">{{ COL_FINAL_VI }}</th>
+          <th class="dt-http">{{ COL_HTTP }}</th>
+          <th class="dt-fill">{{ COL_CHAIN }}</th>
+          <th class="dt-fill">{{ COL_FINAL_URL }}</th>
+          <th class="dt-fill">{{ COL_DNS }}</th>
+          <th class="dt-fill">{{ COL_DETAIL }}</th>
         </tr>
       </thead>
       <tbody id="live-stream-tbody"></tbody>
@@ -95,11 +96,18 @@
     if (!form) return;
     var runBtn = document.getElementById("live-run-btn");
     var colOrderEl = document.getElementById("live-col-order");
+    var colTdClassesEl = document.getElementById("live-col-td-classes");
     var colOrder = [];
+    var colTdClasses = [];
     try {
       colOrder = colOrderEl ? JSON.parse(colOrderEl.textContent) : [];
     } catch (e) {
       colOrder = [];
+    }
+    try {
+      colTdClasses = colTdClassesEl ? JSON.parse(colTdClassesEl.textContent) : [];
+    } catch (e) {
+      colTdClasses = [];
     }
     if (runBtn) {
       runBtn.addEventListener("click", function () {
@@ -134,10 +142,13 @@
       if (!tbody || !colOrder.length) return;
       var tr = document.createElement("tr");
       tr.className = "row-" + statusRowClass(row["Trạng_Thái"] || "");
-      colOrder.forEach(function (key) {
+      colOrder.forEach(function (key, idx) {
         var td = document.createElement("td");
         var v = row[key];
         td.textContent = v != null && v !== undefined ? String(v) : "";
+        td.className = colTdClasses[idx] || "dt-fill";
+        if (idx === 1) td.classList.add("td-original");
+        if (idx === 7) td.classList.add("td-detail");
         tr.appendChild(td);
       });
       tbody.appendChild(tr);

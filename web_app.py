@@ -21,11 +21,11 @@ from live.parsing import browse_url_for_cell
 
 from dynamic_live_core import (
     COL_CHAIN,
+    COL_DETAIL,
     COL_DNS,
     COL_FINAL_URL,
     COL_FINAL_VI,
     COL_HTTP,
-    COL_NET,
     COL_ORIGINAL,
     DNS_TIMEOUT_SECONDS,
     EXPECTED_GUEST_IP,
@@ -42,6 +42,7 @@ from dynamic_live_core import (
     normalize_target,
     parse_dns_servers,
     read_uploaded_text_lines,
+    RESULT_DF_COLUMNS,
     run_live_test_from_lines_async,
     run_network_preflight,
 )
@@ -57,7 +58,7 @@ EXPORT_COLUMN_DEFS: list[dict[str, str]] = [
     {"slug": "chuoi", "key": COL_CHAIN, "label": COL_CHAIN},
     {"slug": "url_dich", "key": COL_FINAL_URL, "label": COL_FINAL_URL},
     {"slug": "dns", "key": COL_DNS, "label": COL_DNS},
-    {"slug": "mang", "key": COL_NET, "label": COL_NET},
+    {"slug": "detail", "key": COL_DETAIL, "label": COL_DETAIL},
     {"slug": "status", "key": "Trạng_Thái", "label": "Trạng_Thái (mã nội bộ)"},
 ]
 EXPORT_SLUG_TO_KEY = {d["slug"]: d["key"] for d in EXPORT_COLUMN_DEFS}
@@ -78,10 +79,26 @@ def _sanitize_upload_stem(filename: Optional[str]) -> str:
     return cleaned[:120]
 
 
-def _export_file_base_name(entry: dict[str, Any]) -> str:
+def _export_state_slug(export_state: str) -> str:
+    """Tiền tố file xuất khi lọc theo state (ALL = không thêm)."""
+    if not export_state or export_state == "ALL":
+        return ""
+    m = {
+        STATUS_BLOCKED: "blocked",
+        STATUS_LEAKED: "leaked",
+        STATUS_DEAD: "dead",
+    }
+    if export_state in m:
+        return m[export_state] + "_"
+    safe = re.sub(r"[^\w]+", "_", str(export_state).lower()).strip("_")
+    return (safe + "_") if safe else ""
+
+
+def _export_file_base_name(entry: dict[str, Any], export_state: str = "ALL") -> str:
     stem = entry.get("upload_stem") or "domains"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"output_{stem}_{ts}"
+    prefix = _export_state_slug(export_state)
+    return f"output_{prefix}{stem}_{ts}"
 
 
 def _attachment_content_disposition(filename: str) -> str:
@@ -120,7 +137,14 @@ def _get_result(rid: str) -> dict[str, Any]:
 
 
 def _df_from_store(entry: dict[str, Any]) -> pd.DataFrame:
-    return pd.read_csv(io.StringIO(entry["df_csv"]))
+    df = pd.read_csv(
+        io.StringIO(entry["df_csv"]),
+        keep_default_na=False,
+    )
+    for c in RESULT_DF_COLUMNS:
+        if c not in df.columns:
+            df[c] = ""
+    return df
 
 
 def _upload_line_display(raw_line: str) -> str:
@@ -179,7 +203,6 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
         "COL_CHAIN": COL_CHAIN,
         "COL_FINAL_URL": COL_FINAL_URL,
         "COL_DNS": COL_DNS,
-        "COL_NET": COL_NET,
     }
     form = await request.form()
     upload = form.get("domain_file")
@@ -248,6 +271,7 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
         "retries": retries,
         "backoff_seconds": backoff_seconds,
         "active_public_dns": active_public_dns,
+        "public_dns_raw": public_dns_raw,
         "preflight": preflight,
         "current_public_ip": current_public_ip,
         "preflight_timeout_seconds": preflight_timeout_seconds,
@@ -260,25 +284,25 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
 async def index(request: Request):
     current_public_ip = await detect_public_ip_async(timeout=3)
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "current_public_ip": current_public_ip,
-            "expected_guest_ip": EXPECTED_GUEST_IP,
-            "default_public_dns": ",".join(PUBLIC_DNS_SERVERS),
-            "default_concurrency": ASYNC_CONCURRENCY,
-            "default_dns_timeout": DNS_TIMEOUT_SECONDS,
-            "default_preflight_timeout": PREFLIGHT_TIMEOUT_SECONDS,
-            "default_retries": HTTP_RETRIES,
-            "default_backoff": BACKOFF_BASE_SECONDS,
-            "error": None,
-            "COL_ORIGINAL": COL_ORIGINAL,
-            "COL_FINAL_VI": COL_FINAL_VI,
-            "COL_HTTP": COL_HTTP,
-            "COL_CHAIN": COL_CHAIN,
-            "COL_FINAL_URL": COL_FINAL_URL,
-            "COL_DNS": COL_DNS,
-            "COL_NET": COL_NET,
+    request=request,  # Đưa request ra ngoài làm tham số riêng (BẮT BUỘC)
+    name="index.html", 
+    context={          
+        "current_public_ip": current_public_ip,
+        "expected_guest_ip": EXPECTED_GUEST_IP,
+        "default_public_dns": ",".join(PUBLIC_DNS_SERVERS),
+        "default_concurrency": ASYNC_CONCURRENCY,
+        "default_dns_timeout": DNS_TIMEOUT_SECONDS,
+        "default_preflight_timeout": PREFLIGHT_TIMEOUT_SECONDS,
+        "default_retries": HTTP_RETRIES,
+        "default_backoff": BACKOFF_BASE_SECONDS,
+        "error": None,
+        "COL_ORIGINAL": COL_ORIGINAL,
+        "COL_FINAL_VI": COL_FINAL_VI,
+        "COL_HTTP": COL_HTTP,
+        "COL_CHAIN": COL_CHAIN,
+        "COL_FINAL_URL": COL_FINAL_URL,
+        "COL_DNS": COL_DNS,
+        "COL_DETAIL": COL_DETAIL,
         },
     )
 
@@ -314,16 +338,24 @@ async def run_live(request: Request):
             status_code=400,
         )
 
-    source_note = f"Nguồn upload: {params['upload_filename'] or 'file'}"
     upload_stem = _sanitize_upload_stem(params["upload_filename"])
+    form_snapshot = {
+        "timeout_seconds": int(params["timeout_seconds"]),
+        "max_domains": int(params["max_domains"]),
+        "concurrency": int(params["concurrency"]),
+        "dns_timeout_seconds": int(params["dns_timeout_seconds"]),
+        "preflight_timeout_seconds": int(params["preflight_timeout_seconds"]),
+        "retries": int(params["retries"]),
+        "backoff_seconds": float(params["backoff_seconds"]),
+        "public_dns_raw": str(params.get("public_dns_raw") or ",".join(PUBLIC_DNS_SERVERS)),
+    }
     rid = _store_result(
         {
-            "df_csv": live_df.to_csv(index=False),
+            "df_csv": live_df.to_csv(index=False, na_rep=""),
             "elapsed": float(elapsed_seconds),
-            "source_note": source_note,
             "upload_stem": upload_stem,
-            "public_ip": params["current_public_ip"],
             "preflight": params["preflight"],
+            "form_snapshot": form_snapshot,
         }
     )
     return RedirectResponse(url=f"/results/{rid}", status_code=303)
@@ -362,16 +394,24 @@ async def run_live_stream(request: Request):
                 if live_df.empty:
                     await q.put(("empty",))
                     return
-                source_note = f"Nguồn upload: {params['upload_filename'] or 'file'}"
                 upload_stem = _sanitize_upload_stem(params["upload_filename"])
+                form_snapshot = {
+                    "timeout_seconds": int(params["timeout_seconds"]),
+                    "max_domains": int(params["max_domains"]),
+                    "concurrency": int(params["concurrency"]),
+                    "dns_timeout_seconds": int(params["dns_timeout_seconds"]),
+                    "preflight_timeout_seconds": int(params["preflight_timeout_seconds"]),
+                    "retries": int(params["retries"]),
+                    "backoff_seconds": float(params["backoff_seconds"]),
+                    "public_dns_raw": str(params.get("public_dns_raw") or ",".join(PUBLIC_DNS_SERVERS)),
+                }
                 rid = _store_result(
                     {
-                        "df_csv": live_df.to_csv(index=False),
+                        "df_csv": live_df.to_csv(index=False, na_rep=""),
                         "elapsed": float(elapsed_seconds),
-                        "source_note": source_note,
                         "upload_stem": upload_stem,
-                        "public_ip": params["current_public_ip"],
                         "preflight": params["preflight"],
+                        "form_snapshot": form_snapshot,
                     }
                 )
                 await q.put(("done", rid, float(elapsed_seconds)))
@@ -435,6 +475,7 @@ async def _results_template_context(request: Request, result_id: str, q: str = "
     filtered = _filter_df_by_search(df, q)
     chart_div = _plotly_div(summary)
     state_options = ["ALL", STATUS_BLOCKED, STATUS_LEAKED, STATUS_DEAD]
+    snap = entry.get("form_snapshot") or {}
     return {
         "request": request,
         "result_id": result_id,
@@ -442,8 +483,6 @@ async def _results_template_context(request: Request, result_id: str, q: str = "
         "table_rows": filtered.to_dict(orient="records"),
         "summary": summary,
         "elapsed_seconds": entry["elapsed"],
-        "source_note": entry.get("source_note", ""),
-        "public_ip": entry.get("public_ip", ""),
         "preflight": entry.get("preflight"),
         "chart_div": chart_div,
         "q": q,
@@ -456,15 +495,17 @@ async def _results_template_context(request: Request, result_id: str, q: str = "
         "COL_CHAIN": COL_CHAIN,
         "COL_FINAL_URL": COL_FINAL_URL,
         "COL_DNS": COL_DNS,
-        "COL_NET": COL_NET,
+        "COL_DETAIL": COL_DETAIL,
         "current_public_ip": current_public_ip,
         "expected_guest_ip": EXPECTED_GUEST_IP,
-        "default_public_dns": ",".join(PUBLIC_DNS_SERVERS),
-        "default_concurrency": ASYNC_CONCURRENCY,
-        "default_dns_timeout": DNS_TIMEOUT_SECONDS,
-        "default_preflight_timeout": PREFLIGHT_TIMEOUT_SECONDS,
-        "default_retries": HTTP_RETRIES,
-        "default_backoff": BACKOFF_BASE_SECONDS,
+        "form_http_timeout": int(snap.get("timeout_seconds", DEFAULT_UI_HTTP_TIMEOUT)),
+        "form_max_domains": int(snap.get("max_domains", 1000)),
+        "default_public_dns": snap.get("public_dns_raw") or ",".join(PUBLIC_DNS_SERVERS),
+        "default_concurrency": int(snap.get("concurrency", ASYNC_CONCURRENCY)),
+        "default_dns_timeout": int(snap.get("dns_timeout_seconds", DNS_TIMEOUT_SECONDS)),
+        "default_preflight_timeout": int(snap.get("preflight_timeout_seconds", PREFLIGHT_TIMEOUT_SECONDS)),
+        "default_retries": int(snap.get("retries", HTTP_RETRIES)),
+        "default_backoff": float(snap.get("backoff_seconds", BACKOFF_BASE_SECONDS)),
         "export_column_defs": EXPORT_COLUMN_DEFS,
     }
 
@@ -472,7 +513,11 @@ async def _results_template_context(request: Request, result_id: str, q: str = "
 @app.get("/results/{result_id}", response_class=HTMLResponse)
 async def results_get(request: Request, result_id: str, q: str = ""):
     ctx = await _results_template_context(request, result_id, q=q)
-    return templates.TemplateResponse("results.html", ctx)
+    return templates.TemplateResponse(
+        request=request,      # Tham số bắt buộc ở phiên bản mới
+        name="results.html",  # Tên file template
+        context=ctx           # Dictionary chứa dữ liệu
+    )
 
 
 def _export_df_for_entry(entry: dict[str, Any], state: Optional[str], q: str) -> pd.DataFrame:
@@ -502,8 +547,8 @@ async def export_csv(result_id: str, state: str = "ALL", q: str = "", cols: str 
     entry = _get_result(result_id)
     df = _export_df_for_entry(entry, state if state != "ALL" else None, q=q)
     df = _subset_export_columns(df, cols)
-    body = df.to_csv(index=False).encode("utf-8-sig")
-    fname = f"{_export_file_base_name(entry)}.csv"
+    body = df.to_csv(index=False, na_rep="").encode("utf-8-sig")
+    fname = f"{_export_file_base_name(entry, state)}.csv"
     return Response(
         content=body,
         media_type="text/csv",
@@ -516,8 +561,8 @@ async def export_txt(result_id: str, state: str = "ALL", q: str = "", cols: str 
     entry = _get_result(result_id)
     df = _export_df_for_entry(entry, state if state != "ALL" else None, q=q)
     df = _subset_export_columns(df, cols)
-    body = df.to_csv(index=False, sep="\t").encode("utf-8-sig")
-    fname = f"{_export_file_base_name(entry)}.txt"
+    body = df.to_csv(index=False, sep="\t", na_rep="").encode("utf-8-sig")
+    fname = f"{_export_file_base_name(entry, state)}.txt"
     return Response(
         content=body,
         media_type="text/plain",

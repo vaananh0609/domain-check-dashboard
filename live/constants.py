@@ -4,19 +4,24 @@ STATUS_BLOCKED = "BLOCKED"
 STATUS_LEAKED = "LEAKED"
 STATUS_DEAD = "DEAD DOMAIN"
 
-COL_ORIGINAL = "Tên miền / IP gốc"
-COL_FINAL_VI = "Trạng thái cuối cùng"
-COL_HTTP = "Mã HTTP"
-COL_CHAIN = "Chuỗi chuyển hướng"
-COL_FINAL_URL = "URL đích"
-COL_DNS = "Phân giải DNS (mạng local)"
-COL_NET = "Kết nối mạng (local)"
+COL_ORIGINAL = "Domain"
+COL_FINAL_VI = "Status"
+COL_HTTP = "HTTP"
+COL_CHAIN = "Redirect chain"
+COL_FINAL_URL = "Final URL"
+COL_DNS = "DNS resolution"
+COL_DETAIL = "Detail"
 
 EXPECTED_GUEST_IP = "113.160.48.66"
 
+#USER_AGENT = (
+#    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+#    "Chrome/126.0.0.0 Safari/537.36"
+#)
+
 USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/17.5 Safari/605.1.15"
 )
 
 ASYNC_CONCURRENCY = 40

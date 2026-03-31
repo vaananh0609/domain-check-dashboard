@@ -216,9 +216,10 @@ input:disabled {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
   margin: 1rem 0;
+  width: 100%;
 }
 
 @media (max-width: 1000px) {
@@ -318,6 +319,7 @@ thead th.sortable:hover {
 table.data-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
   font-size: 0.88rem;
 }
 
@@ -326,16 +328,127 @@ table.data-table th {
   top: 0;
   background: var(--blue-dark);
   color: #fff;
-  padding: 0.55rem 0.5rem;
+  padding: 0.55rem 0.65rem;
   text-align: left;
+  vertical-align: middle;
   z-index: 1;
 }
 
 table.data-table td {
-  padding: 0.45rem 0.5rem;
+  padding: 0.5rem 0.65rem;
   vertical-align: top;
   border-bottom: 1px solid #eceff1;
+}
+
+/* Cột “luôn”: STT + Status + HTTP — chỉ cho bảng auto-layout (không dùng data-table--fixed-cols) */
+table.data-table:not(.data-table--fixed-cols) th.dt-stt,
+table.data-table:not(.data-table--fixed-cols) td.dt-stt {
+  width: 1%;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data-table:not(.data-table--fixed-cols) th.dt-status,
+table.data-table:not(.data-table--fixed-cols) td.dt-status,
+table.data-table:not(.data-table--fixed-cols) th.dt-http,
+table.data-table:not(.data-table--fixed-cols) td.dt-http {
+  width: 1%;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Cột nhiều chữ (auto-layout): anywhere có thể tách từng ký tự nếu cột quá hẹp — không dùng cho fixed-cols */
+table.data-table:not(.data-table--fixed-cols) th.dt-fill,
+table.data-table:not(.data-table--fixed-cols) td.dt-fill {
+  text-align: left;
   word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Bảng fixed-cols (live stream + trang kết quả): tỉ lệ + min-width để không bị ép cột; wrap từ tự nhiên */
+table.data-table.data-table--fixed-cols {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 52rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(1),
+table.data-table.data-table--fixed-cols td:nth-child(1) {
+  width: 4%;
+  min-width: 2.75rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(2),
+table.data-table.data-table--fixed-cols td:nth-child(2) {
+  width: 18%;
+  min-width: 8rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(3),
+table.data-table.data-table--fixed-cols td:nth-child(3) {
+  width: 10%;
+  min-width: 5rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(4),
+table.data-table.data-table--fixed-cols td:nth-child(4) {
+  width: 6%;
+  min-width: 3.5rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(5),
+table.data-table.data-table--fixed-cols td:nth-child(5) {
+  width: 12%;
+  min-width: 6rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(6),
+table.data-table.data-table--fixed-cols td:nth-child(6) {
+  width: 16%;
+  min-width: 7rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(7),
+table.data-table.data-table--fixed-cols td:nth-child(7) {
+  width: 14%;
+  min-width: 6rem;
+}
+
+table.data-table.data-table--fixed-cols th:nth-child(8),
+table.data-table.data-table--fixed-cols td:nth-child(8) {
+  width: 20%;
+  min-width: 8rem;
+}
+
+table.data-table.data-table--fixed-cols th.dt-stt,
+table.data-table.data-table--fixed-cols td.dt-stt {
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data-table.data-table--fixed-cols th.dt-status,
+table.data-table.data-table--fixed-cols td.dt-status {
+  text-align: center;
+  white-space: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data-table.data-table--fixed-cols th.dt-http,
+table.data-table.data-table--fixed-cols td.dt-http {
+  text-align: center;
+  white-space: normal;
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data-table.data-table--fixed-cols th.dt-fill,
+table.data-table.data-table--fixed-cols td.dt-fill {
+  text-align: left;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 tr.row-blocked td {

@@ -32,8 +32,6 @@
     </div>
 
     <div class="alert alert-info">Tổng thời gian chạy: {{ "%.2f"|format(elapsed_seconds) }} giây</div>
-    {% if source_note %}<p class="small">{{ source_note }}</p>{% endif %}
-    {% if public_ip %}<p class="small">Public IP khi chạy: {{ public_ip }}</p>{% endif %}
 
     <div class="chart-wrap">{{ chart_div | safe }}</div>
 
@@ -47,30 +45,30 @@
     <p class="small">Đang hiển thị {{ "{:,}".format(shown_rows) }} / {{ "{:,}".format(total_rows) }} dòng</p>
 
     <div class="table-wrap">
-      <table class="data-table sortable-table" id="result-table">
+      <table class="data-table data-table--fixed-cols sortable-table" id="result-table">
         <thead>
           <tr>
-            <th class="sortable" data-type="num" data-col="0">STT</th>
-            <th class="sortable" data-type="str" data-col="1">{{ COL_ORIGINAL }}</th>
-            <th class="sortable" data-type="str" data-col="2">{{ COL_FINAL_VI }}</th>
-            <th class="sortable" data-type="str" data-col="3">{{ COL_HTTP }}</th>
-            <th class="sortable" data-type="str" data-col="4">{{ COL_CHAIN }}</th>
-            <th class="sortable" data-type="str" data-col="5">{{ COL_FINAL_URL }}</th>
-            <th class="sortable" data-type="str" data-col="6">{{ COL_DNS }}</th>
-            <th class="sortable" data-type="str" data-col="7">{{ COL_NET }}</th>
+            <th class="sortable dt-stt" data-type="num" data-col="0">STT</th>
+            <th class="sortable dt-fill" data-type="str" data-col="1">{{ COL_ORIGINAL }}</th>
+            <th class="sortable dt-status" data-type="str" data-col="2">{{ COL_FINAL_VI }}</th>
+            <th class="sortable dt-http" data-type="str" data-col="3">{{ COL_HTTP }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="4">{{ COL_CHAIN }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="5">{{ COL_FINAL_URL }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="6">{{ COL_DNS }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="7">{{ COL_DETAIL }}</th>
           </tr>
         </thead>
         <tbody>
           {% for row in table_rows %}
           <tr class="row-{{ row['Trạng_Thái']|status_row_class }}">
-            <td>{{ row['STT']|default('') }}</td>
-            <td class="td-original">{% set ou = row[COL_ORIGINAL]|default('') %}{% set href = ou|browse_url %}{% if href %}<a class="link-domain" href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ ou }}</a>{% else %}{{ ou }}{% endif %}</td>
-            <td>{{ row[COL_FINAL_VI]|default('') }}</td>
-            <td>{{ row[COL_HTTP]|default('') }}</td>
-            <td>{{ row[COL_CHAIN]|default('') }}</td>
-            <td>{{ row[COL_FINAL_URL]|default('') }}</td>
-            <td>{{ row[COL_DNS]|default('') }}</td>
-            <td>{{ row[COL_NET]|default('') }}</td>
+            <td class="dt-stt">{{ row['STT']|default('') }}</td>
+            <td class="dt-fill td-original">{% set ou = row[COL_ORIGINAL]|default('') %}{% set href = ou|browse_url %}{% if href %}<a class="link-domain" href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ ou }}</a>{% else %}{{ ou }}{% endif %}</td>
+            <td class="dt-status">{{ row[COL_FINAL_VI]|default('') }}</td>
+            <td class="dt-http">{{ row[COL_HTTP]|default('') }}</td>
+            <td class="dt-fill">{{ row[COL_CHAIN]|default('') }}</td>
+            <td class="dt-fill">{{ row[COL_FINAL_URL]|default('') }}</td>
+            <td class="dt-fill">{{ row[COL_DNS]|default('') }}</td>
+            <td class="dt-fill td-detail">{{ row[COL_DETAIL]|default('') }}</td>
           </tr>
           {% endfor %}
         </tbody>

@@ -11,11 +11,11 @@ from .constants import (
     ASYNC_CONCURRENCY,
     BACKOFF_BASE_SECONDS,
     COL_CHAIN,
+    COL_DETAIL,
     COL_DNS,
     COL_FINAL_URL,
     COL_FINAL_VI,
     COL_HTTP,
-    COL_NET,
     COL_ORIGINAL,
     DNS_TIMEOUT_SECONDS,
     HTTP_RETRIES,
@@ -47,7 +47,7 @@ RESULT_DF_COLUMNS = [
     COL_CHAIN,
     COL_FINAL_URL,
     COL_DNS,
-    COL_NET,
+    COL_DETAIL,
     "Trạng_Thái",
 ]
 
@@ -115,7 +115,7 @@ async def run_live_test_from_lines_async(
                         COL_CHAIN: "—",
                         COL_FINAL_URL: "",
                         COL_DNS: "—",
-                        COL_NET: "Lỗi đo",
+                        COL_DETAIL: "",
                         "Trạng_Thái": STATUS_DEAD,
                     }
 
@@ -139,6 +139,7 @@ async def run_live_test_from_lines_async(
 
     sorted_results = [results[i] for i in sorted(results.keys())]
     df = pd.DataFrame(sorted_results)
+    df = df.fillna("")
     for c in RESULT_DF_COLUMNS:
         if c not in df.columns:
             df[c] = ""
