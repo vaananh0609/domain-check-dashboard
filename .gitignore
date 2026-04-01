@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.vscode/
+/.venv/
+env/
+venv/
+*.egg-info/
+
+# File tạm / export tay (không thuộc mã nguồn)
+tmp_*.txt
+output-*.csv

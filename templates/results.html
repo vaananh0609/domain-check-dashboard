@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kết quả — Dynamic Live Testing</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="layout">
+    <h1>Dynamic Live Testing</h1>
+    <p class="caption">Kết quả kiểm thử Gateway — có thể chạy lại ngay bên dưới mà không cần tải lại trang.</p>
+
+    {% include "_live_form.html" %}
+
+    <p id="stale-run-banner" class="stale-banner" hidden>Đang chạy kiểm thử...</p>
+
+    <div id="stale-results-wrap" class="result-block">
+    {% if preflight %}
+    <div class="alert alert-info">
+      Kiểm tra kết nối trước khi chạy:
+      local_dns={{ preflight.get('local_dns', '') }} | public_dns={{ preflight.get('public_dns', '') }} | http={{ preflight.get('http', '') }}
+    </div>
+    {% endif %}
+
+    <h2 class="section-title">2) Summary Charts</h2>
+    <div class="metrics">
+      <div class="metric-card metric-card--total"><div class="label">Tổng domain</div><div class="value">{{ "{:,}".format(total_rows) }}</div></div>
+      <div class="metric-card metric-card--blocked"><div class="label">Blocked by Gateway</div><div class="value">{{ summary.get('BLOCKED', 0) }}</div></div>
+      <div class="metric-card metric-card--leaked"><div class="label">Leaked</div><div class="value">{{ summary.get('LEAKED', 0) }}</div></div>
+      <div class="metric-card metric-card--dead"><div class="label">Dead Domains</div><div class="value">{{ summary.get('DEAD DOMAIN', 0) }}</div></div>
+    </div>
+
+    <div class="alert alert-info">Tổng thời gian chạy: {{ "%.2f"|format(elapsed_seconds) }} giây</div>
+
+    <div class="chart-wrap">{{ chart_div | safe }}</div>
+
+    <h2 class="section-title">3) Data Table</h2>
+    <p class="small">Click tiêu đề cột để sắp xếp (A→Z / Z→A).</p>
+    <form method="get" action="/results/{{ result_id }}" class="filter-row">
+      <label for="q">Search domain / URL</label>
+      <input type="text" id="q" name="q" value="{{ q or '' }}" placeholder="Lọc theo tên miền, IP hoặc URL đích..." style="max-width:360px" />
+      <button type="submit" class="btn-secondary">Lọc</button>
+    </form>
+    <p class="small">Đang hiển thị {{ "{:,}".format(shown_rows) }} / {{ "{:,}".format(total_rows) }} dòng</p>
+
+    <div class="table-wrap">
+      <table class="data-table data-table--fixed-cols sortable-table" id="result-table">
+        <thead>
+          <tr>
+            <th class="sortable dt-stt" data-type="num" data-col="0">STT</th>
+            <th class="sortable dt-fill" data-type="str" data-col="1">{{ COL_ORIGINAL }}</th>
+            <th class="sortable dt-status" data-type="str" data-col="2">{{ COL_FINAL_VI }}</th>
+            <th class="sortable dt-http" data-type="str" data-col="3">{{ COL_HTTP }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="4">{{ COL_CHAIN }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="5">{{ COL_FINAL_URL }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="6">{{ COL_DNS }}</th>
+            <th class="sortable dt-fill" data-type="str" data-col="7">{{ COL_DETAIL }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in table_rows %}
+          <tr class="row-{{ row['Trạng_Thái']|status_row_class }}">
+            <td class="dt-stt">{{ row['STT']|default('') }}</td>
+            <td class="dt-fill td-original">{% set ou = row[COL_ORIGINAL]|default('') %}{% set href = ou|browse_url %}{% if href %}<a class="link-domain" href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ ou }}</a>{% else %}{{ ou }}{% endif %}</td>
+            <td class="dt-status">{{ row[COL_FINAL_VI]|default('') }}</td>
+            <td class="dt-http">{{ row[COL_HTTP]|default('') }}</td>
+            <td class="dt-fill">{{ row[COL_CHAIN]|default('') }}</td>
+            <td class="dt-fill">{{ row[COL_FINAL_URL]|default('') }}</td>
+            <td class="dt-fill">{{ row[COL_DNS]|default('') }}</td>
+            <td class="dt-fill td-detail">{{ row[COL_DETAIL]|default('') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">4) Export Report</h2>
+    <section class="export-panel" aria-label="Xuất báo cáo">
+      <div class="export-panel__toolbar">
+        <div class="export-panel__field">
+          <label class="export-panel__label" for="export_state">State</label>
+          <select id="export_state" class="export-select">
+            {% for s in state_options %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="export-cols-actions">
+          <button type="button" class="export-pill" id="export-cols-all">Chọn tất cả</button>
+          <button type="button" class="export-pill export-pill--muted" id="export-cols-none">Bỏ chọn</button>
+        </div>
+      </div>
+      <fieldset class="export-cols-field">
+        <legend class="export-cols-legend">Cột cần xuất</legend>
+        <div class="export-cols-grid">
+          {% for col in export_column_defs %}
+          <label class="export-col-label">
+            <input type="checkbox" name="export_col" value="{{ col.slug }}" checked />
+            <span class="export-col-text">{{ col.label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <p class="export-caption" id="export-caption">
+        <span class="export-caption__state">State: <strong id="cap-state">ALL</strong></span>
+        <span class="export-caption__sep">·</span>
+        <span>Áp dụng bộ lọc Search hiện tại</span>
+      </p>
+      <div class="export-row">
+        <a href="#" id="lnk-csv" class="export-btn export-btn--csv"><span class="export-btn__icon" aria-hidden="true">▦</span> Xuất CSV</a>
+        <a href="#" id="lnk-txt" class="export-btn export-btn--txt"><span class="export-btn__icon" aria-hidden="true">≡</span> Xuất TXT</a>
+      </div>
+    </section>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var rid = {{ result_id|tojson }};
+      var qRaw = {{ (q or '')|tojson }};
+      var sel = document.getElementById('export_state');
+      var allBoxes = function () { return document.querySelectorAll('input[name="export_col"]'); };
+      var checkedBoxes = function () { return document.querySelectorAll('input[name="export_col"]:checked'); };
+      function enc(s) { return encodeURIComponent(s); }
+      function colsParam() {
+        var all = allBoxes();
+        var chk = checkedBoxes();
+        if (chk.length === 0) return null;
+        if (chk.length === all.length) return '';
+        return Array.prototype.map.call(chk, function (b) { return b.value; }).join(',');
+      }
+      function url(kind) {
+        var st = sel.value;
+        var u = '/export/' + rid + '/' + kind + '?state=' + enc(st);
+        if (qRaw) u += '&q=' + enc(qRaw);
+        var c = colsParam();
+        if (c === null) return '#';
+        if (c) u += '&cols=' + enc(c);
+        return u;
+      }
+      function refresh() {
+        var csv = document.getElementById('lnk-csv');
+        var txt = document.getElementById('lnk-txt');
+        csv.href = url('csv');
+        txt.href = url('txt');
+        document.getElementById('cap-state').textContent = sel.value;
+        var empty = colsParam() === null;
+        csv.setAttribute('aria-disabled', empty ? 'true' : 'false');
+        txt.setAttribute('aria-disabled', empty ? 'true' : 'false');
+        csv.classList.toggle('export-btn--disabled', empty);
+        txt.classList.toggle('export-btn--disabled', empty);
+      }
+      function wireExportClick(el) {
+        el.addEventListener('click', function (e) {
+          if (colsParam() === null) {
+            e.preventDefault();
+            alert('Chọn ít nhất một cột để xuất.');
+          }
+        });
+      }
+      sel.addEventListener('change', refresh);
+      allBoxes().forEach(function (b) { b.addEventListener('change', refresh); });
+      document.getElementById('export-cols-all').addEventListener('click', function () {
+        allBoxes().forEach(function (b) { b.checked = true; });
+        refresh();
+      });
+      document.getElementById('export-cols-none').addEventListener('click', function () {
+        allBoxes().forEach(function (b) { b.checked = false; });
+        refresh();
+      });
+      wireExportClick(document.getElementById('lnk-csv'));
+      wireExportClick(document.getElementById('lnk-txt'));
+      refresh();
+    })();
+  </script>
+  <script>
+    (function () {
+      var form = document.getElementById('live-form');
+      if (!form) return;
+      form.addEventListener('submit', function () {
+        var wrap = document.getElementById('stale-results-wrap');
+        var banner = document.getElementById('stale-run-banner');
+        if (wrap) wrap.classList.add('result-block--stale');
+        if (banner) banner.hidden = false;
+      });
+    })();
+  </script>
+  <script src="/static/table-sort.js"></script>
+</body>
+</html>

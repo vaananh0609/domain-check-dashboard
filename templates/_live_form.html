@@ -1,0 +1,262 @@
+<h2 class="section-title">1) Chạy kiểm thử trực tiếp trên giao diện</h2>
+
+{% if current_public_ip == expected_guest_ip %}
+<div class="alert alert-info">Public IP: {{ current_public_ip }} (đúng mạng Guest)</div>
+{% else %}
+<div class="alert alert-info">Public IP: {{ current_public_ip }}</div>
+{% endif %}
+
+<form method="post" action="/run" enctype="multipart/form-data" id="live-form">
+  <div class="grid-2">
+    <div class="upload-zone">
+      <label for="domain_file">Upload file danh sách domain/URL (.csv hoặc .txt)</label>
+      <input id="domain_file" name="domain_file" type="file" accept=".csv,.txt" required />
+    </div>
+    <div>
+      <div class="field">
+        <label for="timeout_seconds">Timeout HTTP (giây)</label>
+        <input id="timeout_seconds" name="timeout_seconds" type="number" min="5" max="60" value="{{ form_http_timeout|default(10) }}" />
+      </div>
+      <div class="field">
+        <label for="max_domains">Số domain cần test</label>
+        <input id="max_domains" name="max_domains" type="number" min="1" max="10000" value="{{ form_max_domains|default(1000) }}" />
+      </div>
+    </div>
+  </div>
+
+  <details class="advanced">
+    <summary>Cấu hình nâng cao (khuyến nghị khi test số lượng lớn)</summary>
+    <div class="adv-grid">
+      <div>
+        <div class="field">
+          <label for="concurrency">Concurrency</label>
+          <input id="concurrency" name="concurrency" type="number" min="1" max="200" value="{{ default_concurrency }}" />
+        </div>
+        <div class="field">
+          <label for="dns_timeout_seconds">DNS timeout (giây)</label>
+          <input id="dns_timeout_seconds" name="dns_timeout_seconds" type="number" min="1" max="30" value="{{ default_dns_timeout }}" />
+        </div>
+        <div class="field">
+          <label for="preflight_timeout_seconds">Preflight timeout (giây)</label>
+          <input id="preflight_timeout_seconds" name="preflight_timeout_seconds" type="number" min="1" max="15" value="{{ default_preflight_timeout }}" />
+        </div>
+      </div>
+      <div>
+        <div class="field">
+          <label for="retries">Retries</label>
+          <input id="retries" name="retries" type="number" min="0" max="8" value="{{ default_retries }}" />
+        </div>
+        <div class="field">
+          <label for="backoff_seconds">Backoff base (giây)</label>
+          <input id="backoff_seconds" name="backoff_seconds" type="number" min="0" max="3" step="0.05" value="{{ default_backoff }}" />
+        </div>
+        <div class="field">
+          <label for="public_dns_raw">Public DNS servers</label>
+          <input id="public_dns_raw" name="public_dns_raw" type="text" value="{{ default_public_dns }}" placeholder="8.8.8.8,1.1.1.1" />
+        </div>
+      </div>
+    </div>
+  </details>
+
+  <button type="button" id="live-run-btn" class="btn-primary">Run Live Testing</button>
+</form>
+
+<script type="application/json" id="live-col-order">{{ ['STT', COL_ORIGINAL, COL_FINAL_VI, COL_HTTP, COL_CHAIN, COL_FINAL_URL, COL_DNS, COL_DETAIL] | tojson }}</script>
+<script type="application/json" id="live-col-td-classes">{{ ['dt-stt', 'dt-fill', 'dt-status', 'dt-http', 'dt-fill', 'dt-fill', 'dt-fill', 'dt-fill'] | tojson }}</script>
+
+<div id="live-stream-wrap" class="live-stream-wrap" hidden>
+  <h3 class="live-stream-title">Đang chạy kiểm thử</h3>
+  <p class="live-progress-text" id="live-progress-text">0 / 0</p>
+  <div class="live-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="live-progress-track">
+    <div class="live-progress-fill" id="live-progress-fill"></div>
+  </div>
+  <p class="live-stream-hint small">Kết quả hiển thị theo thứ tự hoàn thành (không phải STT). Khi xong sẽ chuyển trang kết quả đầy đủ.</p>
+  <div class="table-wrap live-stream-table-wrap">
+    <table class="data-table data-table--fixed-cols" id="live-stream-table">
+      <thead>
+        <tr>
+          <th class="dt-stt">STT</th>
+          <th class="dt-fill">{{ COL_ORIGINAL }}</th>
+          <th class="dt-status">{{ COL_FINAL_VI }}</th>
+          <th class="dt-http">{{ COL_HTTP }}</th>
+          <th class="dt-fill">{{ COL_CHAIN }}</th>
+          <th class="dt-fill">{{ COL_FINAL_URL }}</th>
+          <th class="dt-fill">{{ COL_DNS }}</th>
+          <th class="dt-fill">{{ COL_DETAIL }}</th>
+        </tr>
+      </thead>
+      <tbody id="live-stream-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var form = document.getElementById("live-form");
+    if (!form) return;
+    var runBtn = document.getElementById("live-run-btn");
+    var colOrderEl = document.getElementById("live-col-order");
+    var colTdClassesEl = document.getElementById("live-col-td-classes");
+    var colOrder = [];
+    var colTdClasses = [];
+    try {
+      colOrder = colOrderEl ? JSON.parse(colOrderEl.textContent) : [];
+    } catch (e) {
+      colOrder = [];
+    }
+    try {
+      colTdClasses = colTdClassesEl ? JSON.parse(colTdClassesEl.textContent) : [];
+    } catch (e) {
+      colTdClasses = [];
+    }
+    if (runBtn) {
+      runBtn.addEventListener("click", function () {
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+        } else if (form.reportValidity()) {
+          form.submit();
+        }
+      });
+    }
+    form.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" || !e.target || !e.target.tagName) return;
+      var tag = e.target.tagName.toLowerCase();
+      if (tag === "textarea" || tag === "select" || tag === "summary" || tag === "button") return;
+      if (tag === "input") {
+        var ty = (e.target.type || "").toLowerCase();
+        if (ty === "submit" || ty === "button") return;
+        e.preventDefault();
+      }
+    });
+
+    function statusRowClass(st) {
+      var m = {
+        "BLOCKED": "blocked",
+        "LEAKED": "leaked",
+        "DEAD DOMAIN": "dead"
+      };
+      return m[st] || "";
+    }
+    function appendRow(row) {
+      var tbody = document.getElementById("live-stream-tbody");
+      if (!tbody || !colOrder.length) return;
+      var tr = document.createElement("tr");
+      tr.className = "row-" + statusRowClass(row["Trạng_Thái"] || "");
+      colOrder.forEach(function (key, idx) {
+        var td = document.createElement("td");
+        var v = row[key];
+        td.textContent = v != null && v !== undefined ? String(v) : "";
+        td.className = colTdClasses[idx] || "dt-fill";
+        if (idx === 1) td.classList.add("td-original");
+        if (idx === 7) td.classList.add("td-detail");
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    function setProgress(done, total) {
+      var pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+      var label = document.getElementById("live-progress-text");
+      var fill = document.getElementById("live-progress-fill");
+      var track = document.getElementById("live-progress-track");
+      if (label) label.textContent = "Đã xử lý " + done + " / " + total;
+      if (fill) fill.style.width = pct + "%";
+      if (track) {
+        track.setAttribute("aria-valuenow", String(pct));
+        track.setAttribute("aria-valuemax", "100");
+      }
+    }
+    function resetLiveUi() {
+      var wrap = document.getElementById("live-stream-wrap");
+      var tbody = document.getElementById("live-stream-tbody");
+      if (tbody) tbody.innerHTML = "";
+      if (wrap) wrap.hidden = true;
+      setProgress(0, 0);
+    }
+
+    async function runStream(fd) {
+      var res = await fetch("/run-stream", { method: "POST", body: fd });
+      if (!res.ok) {
+        var msg = "Lỗi máy chủ (" + res.status + ")";
+        try {
+          var j = await res.json();
+          if (j && j.error) msg = j.error;
+        } catch (e2) {}
+        throw new Error(msg);
+      }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = "";
+      while (true) {
+        var r = await reader.read();
+        if (r.done) break;
+        buffer += decoder.decode(r.value, { stream: true });
+        var parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+        for (var i = 0; i < parts.length; i++) {
+          var chunk = parts[i];
+          if (!chunk.trim()) continue;
+          var eventName = "message";
+          var dataStr = null;
+          chunk.split("\n").forEach(function (line) {
+            if (line.indexOf("event:") === 0) eventName = line.slice(6).trim();
+            if (line.indexOf("data:") === 0) dataStr = line.slice(5).trim();
+          });
+          if (!dataStr) continue;
+          var data = JSON.parse(dataStr);
+          if (eventName === "meta") {
+            var wrap = document.getElementById("live-stream-wrap");
+            if (wrap) {
+              wrap.hidden = false;
+              try {
+                wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              } catch (e3) {}
+            }
+            if (data.total != null) setProgress(0, data.total);
+          } else if (eventName === "row") {
+            if (data.row) appendRow(data.row);
+            if (data.done != null && data.total != null) setProgress(data.done, data.total);
+          } else if (eventName === "complete") {
+            window.location.href = "/results/" + encodeURIComponent(data.result_id);
+            return true;
+          } else if (eventName === "error") {
+            throw new Error(data.message || "Lỗi không xác định");
+          }
+        }
+      }
+      return false;
+    }
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!form.checkValidity()) return;
+      var wrap = document.getElementById("live-stream-wrap");
+      var tbody = document.getElementById("live-stream-tbody");
+      if (tbody) tbody.innerHTML = "";
+      if (wrap) wrap.hidden = false;
+      if (runBtn) {
+        runBtn.disabled = true;
+        runBtn.textContent = "Đang chạy…";
+      }
+      var fd = new FormData(form);
+      var redirected = false;
+      runStream(fd)
+        .then(function (r) {
+          redirected = !!r;
+          if (!redirected) {
+            alert("Luồng kết thúc bất thường (không nhận được tín hiệu hoàn tất).");
+            resetLiveUi();
+          }
+        })
+        .catch(function (err) {
+          alert(err && err.message ? err.message : String(err));
+          resetLiveUi();
+        })
+        .finally(function () {
+          if (runBtn && !redirected) {
+            runBtn.disabled = false;
+            runBtn.textContent = "Run Live Testing";
+          }
+        });
+    });
+  })();
+</script>

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dynamic Live Testing</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="layout">
+    <h1>Dynamic Live Testing</h1>
+    <p class="caption">Chạy kiểm thử trực tiếp trên giao diện để đánh giá tỷ lệ chặn thực tế của Gateway</p>
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    {% include "_live_form.html" %}
+  </div>
+</body>
+</html>
