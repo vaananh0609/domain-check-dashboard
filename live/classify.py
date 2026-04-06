@@ -81,6 +81,23 @@ async def has_ech_record(host: str) -> bool:
         return False
 
 
+
+
+
+async def probe_tcp(ip: str, port: int = 443, timeout: float = 5.0) -> bool:
+    """True = TCP connect được -> IP không bị chặn tầng mạng local."""
+    try:
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=timeout)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 def _parse_worker_status_int(raw: Any) -> Optional[int]:
     """Parse mã HTTP từ JSON (int, float, '523', '523.0', …)."""
     if raw is None:
@@ -352,6 +369,7 @@ async def classify_live_domain(
     backoff_base: float = BACKOFF_BASE_SECONDS,
 ) -> dict[str, str]:
     host, urls = extract_host_and_urls(raw_target)
+    is_ip_target = is_ipv4(host)
     local_rcode = "—"
     local_ips: list[str] = []
     public_ips: list[str] = []
@@ -368,7 +386,7 @@ async def classify_live_domain(
             [],
         )
 
-    if is_ipv4(host):
+    if is_ip_target:
         local_rcode, local_ips = ("NOERROR", [host])
     else:
         local_rcode, local_ips = await resolve_a_and_aaaa(host, resolver, dns_timeout, prefer_os_getaddrinfo=True)
@@ -389,7 +407,21 @@ async def classify_live_domain(
                 dns_column_suffix="",
             )
 
-        public_has_record_hint = bool(public_ips) or (ra_pub == "NOERROR") or (r6_pub == "NOERROR")
+        # TIMEOUT và không có bản ghi A/AAAA từ public -> coi là DEAD.
+        if not public_ips and _public_rcode == "TIMEOUT":
+            return build_live_row_dict(
+                original_label,
+                STATUS_DEAD,
+                "Public DNS TIMEOUT và không có bản ghi A/AAAA -> DEAD",
+                "",
+                "",
+                "—",
+                local_rcode,
+                local_ips,
+                dns_column_suffix="",
+            )
+
+        public_has_record_hint = bool(public_ips)
         if local_rcode == "NXDOMAIN" and public_has_record_hint:
             return build_live_row_dict(
                 original_label,
@@ -447,6 +479,39 @@ async def classify_live_domain(
                 if attempt < retries:
                     await asyncio.sleep(backoff_base * (2**attempt))
                     continue
+
+                # IP trực tiếp: không có SNI/ECH -> probe cả 443 và 80,
+                # kết luận dựa vào kết nối TCP local thay vì dựa vào Worker.
+                if is_ip_target:
+                    tcp_443 = await probe_tcp(host, port=443, timeout=float(timeout))
+                    tcp_80 = await probe_tcp(host, port=80, timeout=float(timeout))
+                    tcp_ok = tcp_443 or tcp_80
+
+                    if not tcp_ok:
+                        return build_live_row_dict(
+                            original_label,
+                            STATUS_BLOCKED,
+                            f"IP trực tiếp, TCP {host}:443 và :80 đều không kết nối được -> BLOCKED tầng mạng",
+                            url,
+                            "—",
+                            "—",
+                            local_rcode,
+                            local_ips,
+                            dns_column_suffix="",
+                        )
+
+                    port_ok = 443 if tcp_443 else 80
+                    return build_live_row_dict(
+                        original_label,
+                        STATUS_LEAKED,
+                        f"IP trực tiếp, TCP:{port_ok} reachable từ local -> người dùng vào được -> LEAKED",
+                        url,
+                        "—",
+                        "—",
+                        local_rcode,
+                        local_ips,
+                        dns_column_suffix="",
+                    )
 
                 # Local HTTP fail hết retry → kiểm tra ECH để quyết định BLOCKED vs verify with Worker
                 ech = await has_ech_record(host)
