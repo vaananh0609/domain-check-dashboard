@@ -7,6 +7,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 import aiodns
+import dns.asyncresolver
 from curl_cffi.requests import AsyncSession
 
 from .constants import (
@@ -61,6 +62,23 @@ def _raw_worker_status_value(worker_result: dict[str, Any]) -> Any:
             continue
         return v
     return None
+
+
+async def has_ech_record(host: str) -> bool:
+    """Query HTTPS record qua public DNS, kiểm tra ECH param (key 5)."""
+    try:
+        resolver = dns.asyncresolver.Resolver()
+        resolver.nameservers = ["8.8.8.8", "1.1.1.1"]
+        resolver.timeout = 3
+        resolver.lifetime = 3
+        answer = await resolver.resolve(host, "HTTPS")
+        for rdata in answer:
+            params = getattr(rdata, "params", {})
+            if params and 5 in params:
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def _parse_worker_status_int(raw: Any) -> Optional[int]:
@@ -429,6 +447,24 @@ async def classify_live_domain(
                 if attempt < retries:
                     await asyncio.sleep(backoff_base * (2**attempt))
                     continue
+
+                # Local HTTP fail hết retry → kiểm tra ECH để quyết định BLOCKED vs verify with Worker
+                ech = await has_ech_record(host)
+                if not ech:
+                    # Không có ECH → BLOCKED
+                    return build_live_row_dict(
+                        original_label,
+                        STATUS_BLOCKED,
+                        "Local HTTP fail, không có ECH record → người dùng không bypass SNI block được → BLOCKED",
+                        url,
+                        "—",
+                        "—",
+                        local_rcode,
+                        local_ips,
+                        dns_column_suffix="",
+                    )
+
+                # Có ECH → verify with Worker để xác định LEAKED hay DEAD
                 worker_result = await _verify_with_worker(url)
                 row = _row_from_worker_result(
                     original_label,
@@ -451,7 +487,7 @@ async def classify_live_domain(
                 return build_live_row_dict(
                     original_label,
                     STATUS_DEAD,
-                    f"Máy chủ đích không phản hồi trên toàn cầu (Server Down: {err_msg})",
+                    f"Có ECH nhưng Worker cũng không phản hồi (Server Down: {err_msg}) → DEAD",
                     url,
                     http_disp,
                     "—",
