@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any, Optional
 from urllib.parse import quote
+import ssl
 
 import aiodns
 import dns.asyncresolver
@@ -28,6 +29,12 @@ from .labels import build_live_row_dict
 from .parsing import is_ipv4
 
 CLOUDFLARE_WORKER_URL = "https://falling-glade-cacd.nguyenthivananh2021.workers.dev/?url="
+
+# Cache TLS probe results for the lifetime of the process/run to avoid duplicate probes
+_tls_cache: dict[str, str] = {}
+_tls_locks: dict[str, asyncio.Lock] = {}
+# Limit concurrent worker fallbacks to avoid hammering the remote worker
+_worker_semaphore = asyncio.Semaphore(8)
 
 
 def _http_display_from_worker_error(worker_result: dict[str, Any]) -> str:
@@ -96,6 +103,87 @@ async def probe_tcp(ip: str, port: int = 443, timeout: float = 5.0) -> bool:
         return True
     except Exception:
         return False
+
+
+async def _probe_tls_local(host: str, port: int = 443, timeout: float = 2.0) -> str:
+    """Try a local TLS handshake and return the negotiated protocol string (e.g. 'TLSv1.3')."""
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        coro = asyncio.open_connection(host, port, ssl=ctx, server_hostname=host)
+        reader, writer = await asyncio.wait_for(coro, timeout=timeout)
+        try:
+            ssl_obj = writer.get_extra_info("ssl_object")
+            if ssl_obj is None:
+                # older transports may expose 'ssl_object' differently
+                proto = ""
+            else:
+                proto = ssl_obj.version() or ""
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+        return str(proto or "")
+    except Exception:
+        return ""
+
+
+async def _fetch_tls_via_worker(target_url: str) -> str:
+    """Call the worker (with concurrency limit) and extract TLS version from its JSON result."""
+    try:
+        async with _worker_semaphore:
+            res = await _verify_with_worker(target_url)
+        if isinstance(res, dict):
+            return str(res.get("tls_version") or res.get("tls") or "")
+    except Exception:
+        pass
+    return ""
+
+
+async def _get_tls_cached(host: str, port: int = 443, probe_timeout: float = 1.5, use_worker_fallback: bool = False, worker_probe_url: Optional[str] = None) -> str:
+    """Return TLS version for host:port using cache -> local probe -> optional worker fallback.
+
+    - `use_worker_fallback` when True will call the remote worker to fetch TLS if local probe fails.
+    - `worker_probe_url` if provided will be used as the URL passed to the worker; otherwise `https://{host}` is used.
+    """
+    key = f"{host}:{port}"
+    if key in _tls_cache:
+        return _tls_cache[key]
+
+    lock = _tls_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _tls_locks[key] = lock
+
+    async with lock:
+        if key in _tls_cache:
+            return _tls_cache[key]
+        # Try local probe
+        tls = ""
+        try:
+            tls = await _probe_tls_local(host, port=port, timeout=probe_timeout)
+        except Exception:
+            tls = ""
+
+        if tls:
+            _tls_cache[key] = tls
+            return tls
+
+        if use_worker_fallback:
+            try:
+                url = worker_probe_url or f"https://{host}"
+                tls_worker = await _fetch_tls_via_worker(url)
+                if tls_worker:
+                    _tls_cache[key] = tls_worker
+                    return tls_worker
+            except Exception:
+                pass
+
+        _tls_cache[key] = ""
+        return ""
 
 
 def _parse_worker_status_int(raw: Any) -> Optional[int]:
@@ -328,6 +416,7 @@ def _classify_local_http_response(
     local_ips: list[str],
     *,
     dns_column_suffix: str = "",
+    tls: str = "",
 ) -> dict[str, str]:
     http_code = str(status_code)
     kind = analyze_http_status(status_code)
@@ -342,6 +431,7 @@ def _classify_local_http_response(
             local_rcode,
             local_ips,
             dns_column_suffix=dns_column_suffix,
+            tls=tls,
         )
     if kind == "WAF_BLOCK":
         return build_live_row_dict(
@@ -354,6 +444,7 @@ def _classify_local_http_response(
             local_rcode,
             local_ips,
             dns_column_suffix=dns_column_suffix,
+            tls=tls,
         )
     return build_live_row_dict(
         original_label,
@@ -365,6 +456,7 @@ def _classify_local_http_response(
         local_rcode,
         local_ips,
         dns_column_suffix=dns_column_suffix,
+        tls=tls,
     )
 
 
@@ -436,6 +528,11 @@ async def classify_live_domain(
 
         public_has_record_hint = bool(public_ips)
         if local_rcode == "NXDOMAIN" and public_has_record_hint:
+            tls_val = ""
+            try:
+                tls_val = await _get_tls_cached(host, 443, probe_timeout=1.0, use_worker_fallback=True, worker_probe_url=f"https://{host}")
+            except Exception:
+                tls_val = ""
             return build_live_row_dict(
                 original_label,
                 STATUS_BLOCKED,
@@ -446,9 +543,15 @@ async def classify_live_domain(
                 local_rcode,
                 local_ips,
                 dns_column_suffix="",
+                tls=tls_val,
             )
 
         if detect_dns_sinkhole(local_ips, public_ips):
+            tls_val = ""
+            try:
+                tls_val = await _get_tls_cached(host, 443, probe_timeout=1.0, use_worker_fallback=True, worker_probe_url=f"https://{host}")
+            except Exception:
+                tls_val = ""
             return build_live_row_dict(
                 original_label,
                 STATUS_BLOCKED,
@@ -459,6 +562,7 @@ async def classify_live_domain(
                 local_rcode,
                 local_ips,
                 dns_column_suffix="",
+                tls=tls_val,
             )
 
     # Retry + backoff chỉ ở đây; send_live_request(..., retries=0) tránh chồng với retry trong http_fetch.
@@ -477,6 +581,13 @@ async def classify_live_domain(
                 if not isinstance(status_code, int) or status_code <= 0:
                     raise RuntimeError(f"No HTTP response (status_code={status_code})")
 
+                tls_val = ""
+                try:
+                    if str(final_url).lower().startswith("https://"):
+                        tls_val = await _get_tls_cached(host, 443, probe_timeout=min(1.5, float(timeout)), use_worker_fallback=False)
+                except Exception:
+                    tls_val = ""
+
                 return _classify_local_http_response(
                     original_label,
                     host,
@@ -487,6 +598,7 @@ async def classify_live_domain(
                     local_rcode,
                     local_ips,
                     dns_column_suffix="",
+                    tls=tls_val,
                 )
             except Exception:
                 if attempt < retries:
@@ -501,6 +613,11 @@ async def classify_live_domain(
                     tcp_ok = tcp_443 or tcp_80
 
                     if not tcp_ok:
+                        tls_val = ""
+                        try:
+                            tls_val = await _get_tls_cached(host, 443, probe_timeout=1.0, use_worker_fallback=True, worker_probe_url=url)
+                        except Exception:
+                            tls_val = ""
                         return build_live_row_dict(
                             original_label,
                             STATUS_BLOCKED,
@@ -511,9 +628,16 @@ async def classify_live_domain(
                             local_rcode,
                             local_ips,
                             dns_column_suffix="",
+                            tls=tls_val,
                         )
 
                     port_ok = 443 if tcp_443 else 80
+                    tls_val = ""
+                    if port_ok == 443:
+                        try:
+                            tls_val = await _get_tls_cached(host, 443, probe_timeout=min(1.5, float(timeout)), use_worker_fallback=False)
+                        except Exception:
+                            tls_val = ""
                     return build_live_row_dict(
                         original_label,
                         STATUS_LEAKED,
@@ -524,12 +648,18 @@ async def classify_live_domain(
                         local_rcode,
                         local_ips,
                         dns_column_suffix="",
+                        tls=tls_val,
                     )
 
                 # Local HTTP fail hết retry → kiểm tra ECH để quyết định BLOCKED vs verify with Worker
                 ech = await has_ech_record(host)
                 if not ech:
                     # Không có ECH → BLOCKED
+                    tls_val = ""
+                    try:
+                        tls_val = await _get_tls_cached(host, 443, probe_timeout=1.0, use_worker_fallback=True, worker_probe_url=url)
+                    except Exception:
+                        tls_val = ""
                     return build_live_row_dict(
                         original_label,
                         STATUS_BLOCKED,
@@ -540,6 +670,7 @@ async def classify_live_domain(
                         local_rcode,
                         local_ips,
                         dns_column_suffix="",
+                        tls=tls_val,
                     )
 
                 # Có ECH → verify with Worker để xác định LEAKED hay DEAD
