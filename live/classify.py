@@ -105,18 +105,22 @@ async def probe_tcp(ip: str, port: int = 443, timeout: float = 5.0) -> bool:
         return False
 
 
-async def _probe_tls_local(host: str, port: int = 443, timeout: float = 2.0) -> str:
-    """Try a local TLS handshake and return the negotiated protocol string (e.g. 'TLSv1.3')."""
+async def _probe_tls_local(host: str, port: int = 443, timeout: float = 2.0, server_hostname: Optional[str] = None) -> str:
+    """Try a local TLS handshake and return the negotiated protocol string (e.g. 'TLSv1.3').
+
+    `host` is the connect target (IP or hostname). `server_hostname` if provided will be
+    used as the SNI value in the TLS handshake (useful when connecting directly to an IP).
+    """
+    sni = server_hostname or host
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        coro = asyncio.open_connection(host, port, ssl=ctx, server_hostname=host)
+        coro = asyncio.open_connection(host, port, ssl=ctx, server_hostname=sni)
         reader, writer = await asyncio.wait_for(coro, timeout=timeout)
         try:
             ssl_obj = writer.get_extra_info("ssl_object")
             if ssl_obj is None:
-                # older transports may expose 'ssl_object' differently
                 proto = ""
             else:
                 proto = ssl_obj.version() or ""
@@ -294,12 +298,9 @@ async def _verify_with_worker(target_url: str) -> dict[str, Any]:
             except Exception:
                 data = None
         
-        # Nếu lấy được JSON hợp lệ từ Worker
+        # Nếu lấy được JSON hợp lệ từ Worker, trả nguyên dict (giữ fields như tls_version)
         if isinstance(data, dict):
-            if "status" in data:
-                return data  # Trường hợp trót lọt (200, 403, 404, 522...)
-            if "error" in data:
-                return {"error": f"worker_msg: {data['error']}"} # Lỗi fetch bên trong Worker (502)
+            return data
                 
         # Fallback nếu Worker trả về HTML rác (lỗi nền tảng của Cloudflare)
         return {"error": f"worker_http_{res.status_code}"}
@@ -500,6 +501,11 @@ async def classify_live_domain(
         )
 
         if ra_pub == "NXDOMAIN" and r6_pub == "NXDOMAIN":
+            tls_val = ""
+            try:
+                tls_val = await _get_tls_cached(host, 443, probe_timeout=1.0, use_worker_fallback=True, worker_probe_url=f"https://{host}")
+            except Exception:
+                tls_val = ""
             return build_live_row_dict(
                 original_label,
                 STATUS_DEAD,
@@ -510,10 +516,16 @@ async def classify_live_domain(
                 local_rcode,
                 local_ips,
                 dns_column_suffix="",
+                tls=tls_val,
             )
 
         # TIMEOUT và không có bản ghi A/AAAA từ public -> coi là DEAD.
         if not public_ips and _public_rcode == "TIMEOUT":
+            tls_val = ""
+            try:
+                tls_val = await _get_tls_cached(host, 443, probe_timeout=1.0, use_worker_fallback=True, worker_probe_url=f"https://{host}")
+            except Exception:
+                tls_val = ""
             return build_live_row_dict(
                 original_label,
                 STATUS_DEAD,
@@ -524,6 +536,7 @@ async def classify_live_domain(
                 local_rcode,
                 local_ips,
                 dns_column_suffix="",
+                tls=tls_val,
             )
 
         public_has_record_hint = bool(public_ips)
@@ -698,6 +711,46 @@ async def classify_live_domain(
                     tls_val = str(wr.get("tls_version") or wr.get("tls") or "")
                 except Exception:
                     tls_val = ""
+
+                # Fallbacks if worker didn't provide TLS info:
+                # 1) local probe to the host
+                if not tls_val:
+                    try:
+                        tls_val = await _get_tls_cached(host, 443, probe_timeout=min(1.5, float(timeout)), use_worker_fallback=False)
+                    except Exception:
+                        tls_val = ""
+
+                # 2) try probing public IPs directly with SNI set to host
+                if not tls_val and public_ips:
+                    for ip in public_ips:
+                        try:
+                            t = await _probe_tls_local(ip, port=443, timeout=1.0, server_hostname=host)
+                            if t:
+                                tls_val = t
+                                break
+                        except Exception:
+                            continue
+
+                # 3) final attempt: ask worker specifically (longer timeout) via cached helper
+                if not tls_val:
+                    try:
+                        tls_val = await _get_tls_cached(host, 443, probe_timeout=3.0, use_worker_fallback=True, worker_probe_url=url)
+                    except Exception:
+                        tls_val = ""
+
+                # If worker returned an error but didn't include tls info, attempt local probe
+                # and finally call worker as a dedicated fallback to fetch tls_version.
+                if not tls_val:
+                    try:
+                        # local probe first (fast)
+                        tls_val = await _get_tls_cached(host, 443, probe_timeout=1.5, use_worker_fallback=False)
+                    except Exception:
+                        tls_val = ""
+                if not tls_val:
+                    try:
+                        tls_val = await _get_tls_cached(host, 443, probe_timeout=2.0, use_worker_fallback=True, worker_probe_url=url)
+                    except Exception:
+                        tls_val = ""
                 return build_live_row_dict(
                     original_label,
                     STATUS_DEAD,
