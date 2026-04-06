@@ -7,6 +7,7 @@ STATUS_DEAD = "DEAD DOMAIN"
 COL_ORIGINAL = "Domain"
 COL_FINAL_VI = "Status"
 COL_HTTP = "HTTP"
+COL_TLS = "TLS"
 COL_CHAIN = "Redirect chain"
 COL_FINAL_URL = "Final URL"
 COL_DNS = "DNS resolution"
@@ -19,14 +20,15 @@ EXPECTED_GUEST_IP = "113.160.48.66"
     "Chrome/126.0.0.0 Safari/537.36"
 )'''
 
-"""USER_AGENT = (
+USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
     "Version/17.5 Safari/605.1.15"
-)"""
+)
 
-USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
+'''USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
+'''
 
-ASYNC_CONCURRENCY = 40
+ASYNC_CONCURRENCY = 20
 
 DNS_TIMEOUT_SECONDS = 4
 HTTP_RETRIES = 2

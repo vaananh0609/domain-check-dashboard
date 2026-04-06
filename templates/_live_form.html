@@ -61,8 +61,8 @@
   <button type="button" id="live-run-btn" class="btn-primary">Run Live Testing</button>
 </form>
 
-<script type="application/json" id="live-col-order">{{ ['STT', COL_ORIGINAL, COL_FINAL_VI, COL_HTTP, COL_CHAIN, COL_FINAL_URL, COL_DNS, COL_DETAIL] | tojson }}</script>
-<script type="application/json" id="live-col-td-classes">{{ ['dt-stt', 'dt-fill', 'dt-status', 'dt-http', 'dt-fill', 'dt-fill', 'dt-fill', 'dt-fill'] | tojson }}</script>
+<script type="application/json" id="live-col-order">{{ ['STT', COL_ORIGINAL, COL_FINAL_VI, COL_HTTP, COL_TLS, COL_CHAIN, COL_FINAL_URL, COL_DNS, COL_DETAIL] | tojson }}</script>
+<script type="application/json" id="live-col-td-classes">{{ ['dt-stt', 'dt-fill', 'dt-status', 'dt-http', 'dt-tls', 'dt-fill', 'dt-fill', 'dt-fill', 'dt-fill'] | tojson }}</script>
 
 <div id="live-stream-wrap" class="live-stream-wrap" hidden>
   <h3 class="live-stream-title">Đang chạy kiểm thử</h3>
@@ -79,6 +79,7 @@
           <th class="dt-fill">{{ COL_ORIGINAL }}</th>
           <th class="dt-status">{{ COL_FINAL_VI }}</th>
           <th class="dt-http">{{ COL_HTTP }}</th>
+          <th class="dt-tls">{{ COL_TLS }}</th>
           <th class="dt-fill">{{ COL_CHAIN }}</th>
           <th class="dt-fill">{{ COL_FINAL_URL }}</th>
           <th class="dt-fill">{{ COL_DNS }}</th>

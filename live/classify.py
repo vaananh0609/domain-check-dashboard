@@ -167,6 +167,7 @@ def _build_worker_row(
     local_rcode: str,
     local_ips: list[str],
     dns_column_suffix: str = "",
+    tls: str = "",
 ) -> dict[str, str]:
     """Worker JSON: `status` → Mã HTTP, `final_url` → URL đích (đã gộp fallback probe nếu trống)."""
     return build_live_row_dict(
@@ -179,6 +180,7 @@ def _build_worker_row(
         local_rcode,
         local_ips,
         dns_column_suffix=dns_column_suffix,
+        tls=tls,
     )
 
 
@@ -234,6 +236,12 @@ def _row_from_worker_result(
 
     proxy_final_url = _worker_final_url(worker_result, probe_url)
     proxy_status = _parse_worker_status_int(raw_status)
+    tls_value = ""
+    try:
+        if isinstance(worker_result, dict):
+            tls_value = str(worker_result.get("tls_version") or worker_result.get("tls") or "")
+    except Exception:
+        tls_value = ""
 
     if proxy_status is None:
         return build_live_row_dict(
@@ -246,6 +254,7 @@ def _row_from_worker_result(
             local_rcode,
             local_ips,
             dns_column_suffix=dns_column_suffix,
+            tls=tls_value,
         )
 
     kind = analyze_http_status(proxy_status)
@@ -259,6 +268,7 @@ def _row_from_worker_result(
             local_rcode=local_rcode,
             local_ips=local_ips,
             dns_column_suffix=dns_column_suffix,
+            tls=tls_value,
         )
     if kind == "WAF_BLOCK":
         return _build_worker_row(
@@ -270,6 +280,7 @@ def _row_from_worker_result(
             local_rcode=local_rcode,
             local_ips=local_ips,
             dns_column_suffix=dns_column_suffix,
+            tls=tls_value,
         )
     # Worker thấy site ALIVE (ví dụ HTTP 200) nhưng local probe fail trước đó.
     # Nếu DNS local là sinkhole so với public -> thực sự bị chặn (BLOCKED).
@@ -285,6 +296,7 @@ def _row_from_worker_result(
                 local_rcode=local_rcode,
                 local_ips=local_ips,
                 dns_column_suffix=dns_column_suffix,
+                tls=tls_value,
             )
     except Exception:
         # Nếu có lỗi khi kiểm tra DNS, fallback sang logic thận trọng bên dưới
@@ -301,6 +313,7 @@ def _row_from_worker_result(
         local_rcode=local_rcode,
         local_ips=local_ips,
         dns_column_suffix=dns_column_suffix,
+        tls=tls_value,
     )
 
 
@@ -549,6 +562,11 @@ async def classify_live_domain(
                 )
                 wr = worker_result if isinstance(worker_result, dict) else {}
                 http_disp = _http_col_when_worker_row_missing(wr)
+                tls_val = ""
+                try:
+                    tls_val = str(wr.get("tls_version") or wr.get("tls") or "")
+                except Exception:
+                    tls_val = ""
                 return build_live_row_dict(
                     original_label,
                     STATUS_DEAD,
@@ -559,4 +577,5 @@ async def classify_live_domain(
                     local_rcode,
                     local_ips,
                     dns_column_suffix="",
+                    tls=tls_val,
                 )

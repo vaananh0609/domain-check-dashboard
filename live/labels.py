@@ -7,6 +7,7 @@ from .constants import (
     COL_FINAL_URL,
     COL_FINAL_VI,
     COL_HTTP,
+    COL_TLS,
     COL_ORIGINAL,
     COL_DETAIL,
     STATUS_BLOCKED,
@@ -52,6 +53,7 @@ def build_live_row_dict(
     dns_rcode: str,
     dns_ips: list[str],
     dns_column_suffix: str = "",
+    tls: str = "",
 ) -> dict[str, str]:
     dns_text = format_dns_column(dns_rcode, dns_ips)
     if dns_column_suffix:
@@ -61,6 +63,7 @@ def build_live_row_dict(
         COL_ORIGINAL: original_label,
         COL_FINAL_VI: final_status_vietnamese(internal),
         COL_HTTP: _cell_str(http_code),
+        COL_TLS: _cell_str(tls),
         COL_CHAIN: _cell_str(redirect_chain),
         COL_FINAL_URL: _cell_str(final_url),
         COL_DNS: dns_text,
