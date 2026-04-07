@@ -7,7 +7,6 @@ STATUS_DEAD = "DEAD DOMAIN"
 COL_ORIGINAL = "Domain"
 COL_FINAL_VI = "Status"
 COL_HTTP = "HTTP"
-COL_TLS = "TLS"
 COL_CHAIN = "Redirect chain"
 COL_FINAL_URL = "Final URL"
 COL_DNS = "DNS resolution"
@@ -15,12 +14,10 @@ COL_DETAIL = "Detail"
 
 EXPECTED_GUEST_IP = "113.160.48.66"
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
-
-'''USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0.0.0 Safari/537.36"
-)'''
+USER_AGENT = (
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko)" 
+    "Chrome/145.0.0.0 Mobile Safari/537.36"
+)
 
 '''
 
