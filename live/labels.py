@@ -2,16 +2,9 @@ import math
 from urllib.parse import urlsplit
 
 from .constants import (
-    COL_CHAIN,
-    COL_DNS,
-    COL_FINAL_URL,
-    COL_FINAL_VI,
-    COL_HTTP,
-    COL_ORIGINAL,
-    COL_DETAIL,
-    STATUS_BLOCKED,
-    STATUS_DEAD,
-    STATUS_LEAKED,
+    COL_CHAIN, COL_DNS, COL_FINAL_URL, COL_FINAL_VI,
+    COL_HTTP, COL_ORIGINAL, COL_DETAIL, COL_TLS,   # ← thêm COL_TLS
+    STATUS_BLOCKED, STATUS_DEAD, STATUS_LEAKED,
 )
 
 _FINAL_VI_BY_STATUS = {
@@ -52,6 +45,7 @@ def build_live_row_dict(
     dns_rcode: str,
     dns_ips: list[str],
     dns_column_suffix: str = "",
+    tls_version: str = "",          # ← tham số mới
 ) -> dict[str, str]:
     dns_text = format_dns_column(dns_rcode, dns_ips)
     if dns_column_suffix:
@@ -61,6 +55,7 @@ def build_live_row_dict(
         COL_ORIGINAL: original_label,
         COL_FINAL_VI: final_status_vietnamese(internal),
         COL_HTTP: _cell_str(http_code),
+        COL_TLS: _cell_str(tls_version),            # ← thêm
         COL_CHAIN: _cell_str(redirect_chain),
         COL_FINAL_URL: _cell_str(final_url),
         COL_DNS: dns_text,
