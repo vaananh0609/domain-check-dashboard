@@ -24,7 +24,7 @@ from .dns import (
     resolve_a_and_aaaa,
     resolve_a_and_aaaa_with_rcodes,
 )
-from .http_fetch import describe_response, extract_host_and_urls, send_live_request
+from .http_fetch import describe_response, extract_host_and_urls, send_live_request, probe_tls_version
 from .labels import build_live_row_dict
 from .parsing import is_ipv4
 
