@@ -24,7 +24,7 @@ from .dns import (
     resolve_a_and_aaaa,
     resolve_a_and_aaaa_with_rcodes,
 )
-from .http_fetch import describe_response, extract_host_and_urls, send_live_request, probe_tls_version
+from .http_fetch import describe_response, extract_host_and_urls, send_live_request, probe_tls_version, format_trace_info
 from .labels import build_live_row_dict
 from .parsing import is_ipv4
 
@@ -304,16 +304,35 @@ def _classify_local_http_response(
     redirect_chain: str,
     local_rcode: str,
     local_ips: list[str],
+    tls_version: Optional[str],
     *,
     dns_column_suffix: str = "",
+    trace_http: Optional[dict] = None,
 ) -> dict[str, str]:
     http_code = str(status_code)
     kind = analyze_http_status(status_code)
+    
+    # Build detail message with optional trace info
+    detail_base = ""
+    if kind == "SERVER_DEAD":
+        detail_base = f"Máy chủ / origin lỗi (HTTP {status_code}) — Cloudflare hoặc upstream sập / không tới được origin"
+    elif kind == "WAF_BLOCK":
+        detail_base = f"Bị tường lửa / WAF chặn probe (HTTP {status_code})"
+    else:
+        detail_base = f"Lọt Gateway | {describe_response(status_code, final_url, history_urls)}"
+    
+    # Append trace info if available
+    if trace_http:
+        trace_str = format_trace_info(trace_http)
+        detail_msg = f"{detail_base} | Trace: {trace_str}"
+    else:
+        detail_msg = detail_base
+    
     if kind == "SERVER_DEAD":
         return build_live_row_dict(
             original_label,
             STATUS_DEAD,
-            f"Máy chủ / origin lỗi (HTTP {status_code}) — Cloudflare hoặc upstream sập / không tới được origin",
+            detail_msg,
             final_url,
             http_code,
             redirect_chain,
@@ -325,7 +344,7 @@ def _classify_local_http_response(
         return build_live_row_dict(
             original_label,
             STATUS_LEAKED,
-            f"Bị tường lửa / WAF chặn probe (HTTP {status_code})",
+            detail_msg,
             final_url,
             http_code,
             redirect_chain,
@@ -336,13 +355,14 @@ def _classify_local_http_response(
     return build_live_row_dict(
         original_label,
         STATUS_LEAKED,
-        f"Lọt Gateway | {describe_response(status_code, final_url, history_urls)}",
+        detail_msg,
         final_url,
         http_code,
         redirect_chain,
         local_rcode,
         local_ips,
         dns_column_suffix=dns_column_suffix,
+        tls_version=tls_version,
     )
 
 
@@ -443,7 +463,7 @@ async def classify_live_domain(
     for url in urls:
         for attempt in range(retries + 1):
             try:
-                status_code, final_url, history_urls, redirect_chain, _response_text = await send_live_request(
+                status_code, final_url, history_urls, redirect_chain, _response_text, tls_version, trace_http = await send_live_request(
                     session,
                     url,
                     timeout=timeout,
@@ -462,16 +482,40 @@ async def classify_live_domain(
                     final_url,
                     history_urls,
                     redirect_chain,
+                    tls_version,
                     local_rcode,
                     local_ips,
                     dns_column_suffix="",
+                    trace_http=trace_http,
                 )
-            except Exception:
+            except Exception as http_exc:
                 if attempt < retries:
                     await asyncio.sleep(backoff_base * (2**attempt))
                     continue
 
-                # IP trực tiếp: không có SNI/ECH -> probe cả 443 và 80,
+                # Local HTTP failed - cần probe TLS để xác định BLOCKED vs LEAKED
+                trace_tls_13, probe_trace_13 = await probe_tls_version(host, port=443, timeout=float(timeout), force_tls12=False)
+                
+                if trace_tls_13:
+                    # TLS probe thành công → vẫn gọi Worker để lấy HTTP code thực
+                    worker_result = await _verify_with_worker(url)
+                    worker_http_code = _http_col_when_worker_row_missing(worker_result) if isinstance(worker_result, dict) else "—"
+                    
+                    tls_probe_detail = f"Local HTTP fail nhưng TLS {trace_tls_13} probe thành công → LEAKED | {format_trace_info(probe_trace_13)}"
+                    return build_live_row_dict(
+                        original_label,
+                        STATUS_LEAKED,
+                        tls_probe_detail,
+                        url,
+                        worker_http_code,  # ← dùng HTTP code từ Worker thay vì "—"
+                        "—",  # redirect_chain vẫn "—" vì local HTTP fail
+                        local_rcode,
+                        local_ips,
+                        dns_column_suffix="",
+                        tls_version=trace_tls_13,
+                    )
+
+                # TLS probe fail - IP trực tiếp: không có SNI/ECH -> probe cả 443 và 80,
                 # kết luận dựa vào kết nối TCP local thay vì dựa vào Worker.
                 if is_ip_target:
                     tcp_443 = await probe_tcp(host, port=443, timeout=float(timeout))

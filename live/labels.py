@@ -55,10 +55,10 @@ def build_live_row_dict(
         COL_ORIGINAL: original_label,
         COL_FINAL_VI: final_status_vietnamese(internal),
         COL_HTTP: _cell_str(http_code),
-        COL_TLS: _cell_str(tls_version),            # ← thêm
         COL_CHAIN: _cell_str(redirect_chain),
         COL_FINAL_URL: _cell_str(final_url),
         COL_DNS: dns_text,
+        COL_TLS: _cell_str(tls_version),            # ← di chuyển xuống sau COL_DNS
         COL_DETAIL: detail,
         "Trạng_Thái": internal,
     }
