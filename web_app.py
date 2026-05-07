@@ -27,6 +27,7 @@ from dynamic_live_core import (
     COL_FINAL_VI,
     COL_HTTP,
     COL_ORIGINAL,
+    COL_TLS,
     DNS_TIMEOUT_SECONDS,
     EXPECTED_GUEST_IP,
     HTTP_RETRIES,
@@ -58,6 +59,7 @@ EXPORT_COLUMN_DEFS: list[dict[str, str]] = [
     {"slug": "chuoi", "key": COL_CHAIN, "label": COL_CHAIN},
     {"slug": "url_dich", "key": COL_FINAL_URL, "label": COL_FINAL_URL},
     {"slug": "dns", "key": COL_DNS, "label": COL_DNS},
+    {"slug": "tls", "key": COL_TLS, "label": COL_TLS},
     {"slug": "detail", "key": COL_DETAIL, "label": COL_DETAIL},
     {"slug": "status", "key": "Trạng_Thái", "label": "Trạng_Thái (mã nội bộ)"},
 ]
@@ -203,6 +205,7 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
         "COL_CHAIN": COL_CHAIN,
         "COL_FINAL_URL": COL_FINAL_URL,
         "COL_DNS": COL_DNS,
+        "COL_TLS": COL_TLS,
     }
     form = await request.form()
     upload = form.get("domain_file")
@@ -302,6 +305,7 @@ async def index(request: Request):
         "COL_CHAIN": COL_CHAIN,
         "COL_FINAL_URL": COL_FINAL_URL,
         "COL_DNS": COL_DNS,
+        "COL_TLS": COL_TLS,
         "COL_DETAIL": COL_DETAIL,
         },
     )
@@ -495,6 +499,7 @@ async def _results_template_context(request: Request, result_id: str, q: str = "
         "COL_CHAIN": COL_CHAIN,
         "COL_FINAL_URL": COL_FINAL_URL,
         "COL_DNS": COL_DNS,
+        "COL_TLS": COL_TLS,
         "COL_DETAIL": COL_DETAIL,
         "current_public_ip": current_public_ip,
         "expected_guest_ip": EXPECTED_GUEST_IP,

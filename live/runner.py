@@ -17,6 +17,7 @@ from .constants import (
     COL_FINAL_VI,
     COL_HTTP,
     COL_ORIGINAL,
+    COL_TLS,
     DNS_TIMEOUT_SECONDS,
     HTTP_RETRIES,
     PUBLIC_DNS_SERVERS,
@@ -47,6 +48,7 @@ RESULT_DF_COLUMNS = [
     COL_CHAIN,
     COL_FINAL_URL,
     COL_DNS,
+    COL_TLS,
     COL_DETAIL,
     "Trạng_Thái",
 ]

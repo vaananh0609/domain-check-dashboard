@@ -24,7 +24,7 @@ from .dns import (
     resolve_a_and_aaaa,
     resolve_a_and_aaaa_with_rcodes,
 )
-from .http_fetch import describe_response, extract_host_and_urls, send_live_request, probe_tls_version
+from .http_fetch import describe_response, extract_host_and_urls, send_live_request, probe_tls_version, format_trace_info
 from .labels import build_live_row_dict
 from .parsing import is_ipv4
 
@@ -148,7 +148,8 @@ def analyze_http_status(status_code: int) -> str:
     Phân loại mã HTTP thống nhất (local và Worker).
     Trả về SERVER_DEAD | WAF_BLOCK | ALIVE.
     """
-    if status_code in (500, 502, 504) or (520 <= status_code <= 530):
+    # if status_code in (500, 502, 504) or (520 <= status_code <= 530):
+    if 500 <= status_code < 600:
         return "SERVER_DEAD"
     if status_code in (403, 406, 429, 451, 503):
         return "WAF_BLOCK"
@@ -225,7 +226,18 @@ def _row_from_worker_result(
 ) -> Optional[dict[str, str]]:
     raw_status = _raw_worker_status_value(worker_result)
     if raw_status is None:
-        return None
+        # Worker không đưa ra được status => coi như không truy cập được qua Worker.
+        return build_live_row_dict(
+            original_label,
+            STATUS_BLOCKED,
+            f"Đối chứng Worker: không có mã HTTP → BLOCKED",
+            probe_url,
+            _http_col_when_worker_row_missing(worker_result),
+            "—",
+            local_rcode,
+            local_ips,
+            dns_column_suffix=dns_column_suffix,
+        )
 
     proxy_final_url = _worker_final_url(worker_result, probe_url)
     proxy_status = _parse_worker_status_int(raw_status)
@@ -286,7 +298,7 @@ def _row_from_worker_result(
     return _build_worker_row(
         original_label,
         STATUS_LEAKED,
-        f"Local probe thất bại nhưng đối chứng HTTP {proxy_status} — khả năng lỗi mạng cục bộ/tạm thời → LEAKED",
+        f"Local probe thất bại nhưng đối chứng HTTP {proxy_status} OK → LEAKED (có thể truy cập qua Cloudflare/Worker)",
         proxy_final_url=proxy_final_url,
         proxy_http_status=proxy_status,
         local_rcode=local_rcode,
@@ -304,16 +316,35 @@ def _classify_local_http_response(
     redirect_chain: str,
     local_rcode: str,
     local_ips: list[str],
+    tls_version: Optional[str],
     *,
     dns_column_suffix: str = "",
+    trace_http: Optional[dict] = None,
 ) -> dict[str, str]:
     http_code = str(status_code)
     kind = analyze_http_status(status_code)
+    
+    # Build detail message with optional trace info
+    detail_base = ""
+    if kind == "SERVER_DEAD":
+        detail_base = f"Máy chủ / origin lỗi (HTTP {status_code}) — Cloudflare hoặc upstream sập / không tới được origin"
+    elif kind == "WAF_BLOCK":
+        detail_base = f"Bị tường lửa / WAF chặn probe (HTTP {status_code})"
+    else:
+        detail_base = f"Lọt Gateway | {describe_response(status_code, final_url, history_urls)}"
+    
+    # Append trace info if available
+    if trace_http:
+        trace_str = format_trace_info(trace_http)
+        detail_msg = f"{detail_base} | Trace: {trace_str}"
+    else:
+        detail_msg = detail_base
+    
     if kind == "SERVER_DEAD":
         return build_live_row_dict(
             original_label,
             STATUS_DEAD,
-            f"Máy chủ / origin lỗi (HTTP {status_code}) — Cloudflare hoặc upstream sập / không tới được origin",
+            detail_msg,
             final_url,
             http_code,
             redirect_chain,
@@ -325,7 +356,7 @@ def _classify_local_http_response(
         return build_live_row_dict(
             original_label,
             STATUS_LEAKED,
-            f"Bị tường lửa / WAF chặn probe (HTTP {status_code})",
+            detail_msg,
             final_url,
             http_code,
             redirect_chain,
@@ -336,13 +367,14 @@ def _classify_local_http_response(
     return build_live_row_dict(
         original_label,
         STATUS_LEAKED,
-        f"Lọt Gateway | {describe_response(status_code, final_url, history_urls)}",
+        detail_msg,
         final_url,
         http_code,
         redirect_chain,
         local_rcode,
         local_ips,
         dns_column_suffix=dns_column_suffix,
+        tls_version=tls_version,
     )
 
 
@@ -443,7 +475,7 @@ async def classify_live_domain(
     for url in urls:
         for attempt in range(retries + 1):
             try:
-                status_code, final_url, history_urls, redirect_chain, _response_text = await send_live_request(
+                status_code, final_url, history_urls, redirect_chain, _response_text, tls_version, trace_http = await send_live_request(
                     session,
                     url,
                     timeout=timeout,
@@ -455,6 +487,37 @@ async def classify_live_domain(
                 if not isinstance(status_code, int) or status_code <= 0:
                     raise RuntimeError(f"No HTTP response (status_code={status_code})")
 
+                # Nếu local trả về WAF_BLOCK (403/429/503...) thì coi như "bị chặn" và đi đối chứng Worker:
+                # - Worker OK => LEAKED
+                # - Worker không OK / không có HTTP => BLOCKED
+                # - Worker DEAD group => DEAD
+                if analyze_http_status(status_code) == "WAF_BLOCK":
+                    worker_result = await _verify_with_worker(url)
+                    row = _row_from_worker_result(
+                        original_label,
+                        worker_result,
+                        local_rcode,
+                        local_ips,
+                        public_ips=public_ips,
+                        probe_url=url,
+                        dns_column_suffix="",
+                    )
+                    if row is not None:
+                        return row
+
+                    return build_live_row_dict(
+                        original_label,
+                        STATUS_BLOCKED,
+                        f"Local WAF_BLOCK (HTTP {status_code}) và Worker không truy cập được → BLOCKED",
+                        final_url,
+                        str(status_code),
+                        redirect_chain,
+                        local_rcode,
+                        local_ips,
+                        dns_column_suffix="",
+                        tls_version=tls_version,
+                    )
+
                 return _classify_local_http_response(
                     original_label,
                     host,
@@ -464,14 +527,67 @@ async def classify_live_domain(
                     redirect_chain,
                     local_rcode,
                     local_ips,
+                    tls_version,
                     dns_column_suffix="",
+                    trace_http=trace_http,
                 )
-            except Exception:
+            except Exception as http_exc:
                 if attempt < retries:
                     await asyncio.sleep(backoff_base * (2**attempt))
                     continue
 
-                # IP trực tiếp: không có SNI/ECH -> probe cả 443 và 80,
+                # Local HTTP failed - cần probe TLS để xác định BLOCKED vs LEAKED
+                trace_tls_13, probe_trace_13 = await probe_tls_version(host, port=443, timeout=float(timeout), force_tls12=False)
+                
+                if trace_tls_13:
+                    # TLS probe thành công → vẫn gọi Worker để lấy HTTP code thực
+                    worker_result = await _verify_with_worker(url)
+                    wr = worker_result if isinstance(worker_result, dict) else {}
+                    worker_http_code = _http_col_when_worker_row_missing(wr)
+
+                    # Nếu Worker có status parse được, dùng analyze_http_status để quyết định DEAD/LEAKED.
+                    # Tránh tình trạng 526/530 vẫn bị gán LEAKED chỉ vì nhánh TLS probe success.
+                    proxy_status = _parse_worker_status_int(_raw_worker_status_value(wr))
+                    kind = analyze_http_status(proxy_status) if proxy_status is not None else None
+
+                    base_trace = format_trace_info(probe_trace_13)
+                    if kind == "SERVER_DEAD":
+                        detail = (
+                            f"Local HTTP fail nhưng TLS {trace_tls_13} probe OK; "
+                            f"đối chứng Worker HTTP {proxy_status} → DEAD"
+                            + (f" | {base_trace}" if base_trace else "")
+                        )
+                        internal = STATUS_DEAD
+                    elif proxy_status is None:
+                        detail = (
+                            f"Local HTTP fail nhưng TLS {trace_tls_13} probe OK; "
+                            f"đối chứng Worker không lấy được HTTP → BLOCKED"
+                            + (f" | {base_trace}" if base_trace else "")
+                        )
+                        internal = STATUS_BLOCKED
+                    else:
+                        # Worker trả được HTTP (ALIVE/WAF_BLOCK) => truy cập được qua Worker => LEAKED
+                        detail = (
+                            f"Local HTTP fail nhưng TLS {trace_tls_13} probe OK; "
+                            f"đối chứng Worker HTTP {proxy_status} OK → LEAKED"
+                            + (f" | {base_trace}" if base_trace else "")
+                        )
+                        internal = STATUS_LEAKED
+
+                    return build_live_row_dict(
+                        original_label,
+                        internal,
+                        detail,
+                        url,
+                        worker_http_code,  # dùng HTTP code từ Worker thay vì "—"
+                        "—",  # redirect_chain vẫn "—" vì local HTTP fail
+                        local_rcode,
+                        local_ips,
+                        dns_column_suffix="",
+                        tls_version=trace_tls_13,
+                    )
+
+                # TLS probe fail - IP trực tiếp: không có SNI/ECH -> probe cả 443 và 80,
                 # kết luận dựa vào kết nối TCP local thay vì dựa vào Worker.
                 if is_ip_target:
                     tcp_443 = await probe_tcp(host, port=443, timeout=float(timeout))
