@@ -39,14 +39,14 @@ PREFLIGHT_TIMEOUT_SECONDS = 3
 # Default public DNS servers used by the app.
 # If you need higher availability, you can revert to the multi-resolver list below.
 #
-# PUBLIC_DNS_SERVERS = [
-#     "8.8.8.8",
-#     "1.1.1.1",
-#     "9.9.9.9",
-# ]
 PUBLIC_DNS_SERVERS = [
+    "8.8.8.8",
     "1.1.1.1",
+    "9.9.9.9",
 ]
+# PUBLIC_DNS_SERVERS = [
+#     "1.1.1.1",
+# ]
 
 PRIVATE_IP_PREFIXES = (
     "127.",
