@@ -35,7 +35,7 @@ async def resolve_a_records(
     resolver: aiodns.DNSResolver,
     dns_timeout: int,
     *,
-    prefer_os_getaddrinfo: bool = True,
+    prefer_os_getaddrinfo: bool = False,
 ) -> tuple[str, list[str]]:
     # public resolver: luôn query (không getaddrinfo) để khác OS
     if prefer_os_getaddrinfo:
@@ -65,7 +65,7 @@ async def resolve_aaaa_records(
     resolver: aiodns.DNSResolver,
     dns_timeout: int,
     *,
-    prefer_os_getaddrinfo: bool = True,
+    prefer_os_getaddrinfo: bool = False,
 ) -> tuple[str, list[str]]:
     if prefer_os_getaddrinfo:
         try:
