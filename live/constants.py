@@ -14,6 +14,7 @@ COL_DETAIL = "Detail"
 
 EXPECTED_GUEST_IP = "113.160.48.66"
 
+'''
 USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko)" 
     "Chrome/145.0.0.0 Mobile Safari/537.36"
@@ -21,13 +22,18 @@ USER_AGENT = (
 
 '''
 
+'''
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
     "Version/17.5 Safari/605.1.15"
-)'''
-
-'''USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
+)
 '''
+
+
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13.6; rv:125.0) "
+    "Gecko/20100101 Firefox/125.0"
+)
 
 ASYNC_CONCURRENCY = 20
 

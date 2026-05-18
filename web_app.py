@@ -197,6 +197,7 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
         "default_preflight_timeout": PREFLIGHT_TIMEOUT_SECONDS,
         "default_retries": HTTP_RETRIES,
         "default_backoff": BACKOFF_BASE_SECONDS,
+        "default_proxy_url": "",
         "current_public_ip": current_public_ip,
         "expected_guest_ip": EXPECTED_GUEST_IP,
         "COL_ORIGINAL": COL_ORIGINAL,
@@ -256,6 +257,7 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
     except (TypeError, ValueError):
         backoff_seconds = BACKOFF_BASE_SECONDS
 
+    proxy_url = str(form.get("proxy_url") or "").strip() or None
     public_dns_raw = str(form.get("public_dns_raw") or ",".join(PUBLIC_DNS_SERVERS))
     active_public_dns = parse_dns_servers(public_dns_raw)
     preflight = await run_network_preflight(
@@ -273,6 +275,7 @@ async def _prepare_live_run(request: Request) -> tuple[Optional[dict[str, Any]],
         "dns_timeout_seconds": dns_timeout_seconds,
         "retries": retries,
         "backoff_seconds": backoff_seconds,
+        "proxy_url": proxy_url,
         "active_public_dns": active_public_dns,
         "public_dns_raw": public_dns_raw,
         "preflight": preflight,
@@ -298,6 +301,7 @@ async def index(request: Request):
         "default_preflight_timeout": PREFLIGHT_TIMEOUT_SECONDS,
         "default_retries": HTTP_RETRIES,
         "default_backoff": BACKOFF_BASE_SECONDS,
+        "default_proxy_url": "",
         "error": None,
         "COL_ORIGINAL": COL_ORIGINAL,
         "COL_FINAL_VI": COL_FINAL_VI,
@@ -326,7 +330,7 @@ async def run_live(request: Request):
         params["target_pairs"],
         timeout=int(params["timeout_seconds"]),
         max_domains=int(params["max_domains"]),
-        proxy_url=None,
+        proxy_url=params["proxy_url"],
         follow_redirects=True,
         concurrency=int(params["concurrency"]),
         dns_timeout=int(params["dns_timeout_seconds"]),
@@ -352,6 +356,7 @@ async def run_live(request: Request):
         "retries": int(params["retries"]),
         "backoff_seconds": float(params["backoff_seconds"]),
         "public_dns_raw": str(params.get("public_dns_raw") or ",".join(PUBLIC_DNS_SERVERS)),
+        "proxy_url": str(params.get("proxy_url") or ""),
     }
     rid = _store_result(
         {
@@ -386,7 +391,7 @@ async def run_live_stream(request: Request):
                     params["target_pairs"],
                     timeout=int(params["timeout_seconds"]),
                     max_domains=int(params["max_domains"]),
-                    proxy_url=None,
+                    proxy_url=params["proxy_url"],
                     follow_redirects=True,
                     concurrency=int(params["concurrency"]),
                     dns_timeout=int(params["dns_timeout_seconds"]),
@@ -408,6 +413,7 @@ async def run_live_stream(request: Request):
                     "retries": int(params["retries"]),
                     "backoff_seconds": float(params["backoff_seconds"]),
                     "public_dns_raw": str(params.get("public_dns_raw") or ",".join(PUBLIC_DNS_SERVERS)),
+                    "proxy_url": str(params.get("proxy_url") or ""),
                 }
                 rid = _store_result(
                     {
