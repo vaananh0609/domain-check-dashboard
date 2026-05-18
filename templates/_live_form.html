@@ -59,6 +59,12 @@
             value="{{ default_backoff }}" />
         </div>
         <div class="field">
+          <label for="proxy_url">Proxy HTTP/SOCKS (nếu muốn dùng mạng khác)</label>
+          <input id="proxy_url" name="proxy_url" type="text" value="{{ default_proxy_url }}"
+            placeholder="http://127.0.0.1:8080 hoặc socks5://127.0.0.1:1080" />
+          <p class="field-help">Nhập proxy mà server có thể truy cập; server sẽ gửi request qua proxy này.</p>
+        </div>
+        <div class="field">
           <label for="public_dns_raw">Public DNS servers</label>
           <input id="public_dns_raw" name="public_dns_raw" type="text" value="{{ default_public_dns }}"
             placeholder="8.8.8.8,1.1.1.1" />
