@@ -24,27 +24,57 @@ def python_environment() -> None:
     print("no_proxy:", os.environ.get("NO_PROXY") or os.environ.get("no_proxy"))
 
 
-def local_dns_lookup(hostname: str, timeout: float = 3.0) -> Any:
+# ✅ FIX: chuyển thành async + await getaddrinfo
+async def local_dns_lookup(hostname: str, timeout: float = 3.0) -> Any:
     try:
         loop = asyncio.get_running_loop()
-        infos = loop.getaddrinfo(hostname, None, family=socket.AF_INET)
+
+        infos = await asyncio.wait_for(
+            loop.getaddrinfo(hostname, None, family=socket.AF_INET),
+            timeout=timeout
+        )
+
         ips = sorted({info[4][0] for info in infos if info and len(info) >= 5})
+
         return {"status": "OK", "ips": ips}
+
     except Exception as exc:
         return {"status": "FAIL", "error": repr(exc)}
 
 
-async def public_dns_lookup(hostname: str, nameserver: str, timeout: float = 3.0) -> Any:
+# ✅ FIX: dùng resolve thay vì query
+async def public_dns_lookup(hostname: str, nameserver: str, timeout: float = 3.0):
     try:
         import aiodns
 
-        resolver = aiodns.DNSResolver(nameservers=[nameserver], timeout=timeout, tries=1)
-        answers = await asyncio.wait_for(resolver.query(hostname, "A"), timeout=timeout)
-        ips = sorted({getattr(record, "host", "") for record in answers if getattr(record, "host", "")})
+        resolver = aiodns.DNSResolver(
+            nameservers=[nameserver],
+            timeout=timeout,
+            tries=1
+        )
+
+        # ✅ FIX: support cả version cũ + mới
+        if hasattr(resolver, "resolve"):
+            answers = await asyncio.wait_for(
+                resolver.resolve(hostname, "A"),
+                timeout=timeout
+            )
+        else:
+            answers = await asyncio.wait_for(
+                resolver.query(hostname, "A"),
+                timeout=timeout
+            )
+
+        ips = sorted({
+            getattr(record, "host", "")
+            for record in answers
+            if getattr(record, "host", "")
+        })
+
         return {"status": "OK", "nameserver": nameserver, "ips": ips}
+
     except Exception as exc:
         return {"status": "FAIL", "nameserver": nameserver, "error": repr(exc)}
-
 
 async def fetch_url(url: str, timeout: float = 5.0) -> Any:
     try:
@@ -53,17 +83,27 @@ async def fetch_url(url: str, timeout: float = 5.0) -> Any:
         except ImportError:
             import httpx
 
-            async with httpx.AsyncClient(verify=False, timeout=timeout, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                verify=False,
+                timeout=timeout,
+                follow_redirects=True
+            ) as client:
                 response = await client.get(url)
                 return {
                     "status": "OK",
                     "status_code": response.status_code,
                     "final_url": str(response.url),
-                    "tls_version": getattr(response, "http_version", "?") if hasattr(response, "http_version") else "?",
+                    "tls_version": getattr(response, "http_version", "?"),
                 }
 
         async with AsyncSession() as session:
-            response = await session.get(url, timeout=timeout, verify=False, impersonate="chrome")
+            response = await session.get(
+                url,
+                timeout=timeout,
+                verify=False,
+                impersonate="chrome"
+            )
+
             raw_tls = None
             try:
                 ssl_obj = getattr(response, "ssl_object", None)
@@ -71,12 +111,14 @@ async def fetch_url(url: str, timeout: float = 5.0) -> Any:
                     raw_tls = ssl_obj.version()
             except Exception:
                 pass
+
             return {
                 "status": "OK",
                 "status_code": response.status_code,
                 "final_url": str(response.url),
                 "tls_version": raw_tls or "unknown",
             }
+
     except Exception as exc:
         return {"status": "FAIL", "error": repr(exc)}
 
@@ -84,8 +126,15 @@ async def fetch_url(url: str, timeout: float = 5.0) -> Any:
 async def run_app_preflight() -> Any:
     try:
         import live.dns as dns
-        res = await dns.run_network_preflight(["8.8.8.8", "1.1.1.1", "9.9.9.9"], dns_timeout=3, timeout=3)
+
+        res = await dns.run_network_preflight(
+            ["8.8.8.8", "1.1.1.1", "9.9.9.9"],
+            dns_timeout=3,
+            timeout=3
+        )
+
         return {"status": "OK", "result": res}
+
     except Exception as exc:
         return {"status": "FAIL", "error": repr(exc)}
 
@@ -94,8 +143,9 @@ async def main() -> None:
     python_environment()
 
     print_header("DNS Tests")
+
     print("local lookup example.com:")
-    local_result = local_dns_lookup("example.com")
+    local_result = await local_dns_lookup("example.com")  # ✅ FIX
     print(local_result)
 
     print("public lookup example.com via 8.8.8.8:")
@@ -107,6 +157,7 @@ async def main() -> None:
     print(public_2)
 
     print_header("HTTP(S) Tests")
+
     print("fetch https://example.com:")
     http_result = await fetch_url("https://example.com")
     print(http_result)
