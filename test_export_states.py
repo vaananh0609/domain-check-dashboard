@@ -69,3 +69,9 @@ def test_export_subset_keeps_rows():
     assert len(out) == 1
     assert "Domain" in out.columns
     assert "HTTP" in out.columns
+
+
+def test_export_trace_column_slug():
+    from web_app import EXPORT_SLUG_TO_KEY
+
+    assert EXPORT_SLUG_TO_KEY["trace"] == "Trace"

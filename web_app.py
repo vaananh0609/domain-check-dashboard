@@ -85,7 +85,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data" / "saved_results"
 SAVED_RESULTS_PAGE_SIZE = 10
 
-# Cột xuất báo cáo — khớp thứ tự bảng Data Table (không gồm DNS / Trace / mã nội bộ)
+# Cột xuất báo cáo — khớp bảng Data Table (+ Trace khi bật Layer trace)
 EXPORT_COLUMN_DEFS: list[dict[str, str]] = [
     {"slug": "stt", "key": "STT", "label": "STT"},
     {"slug": "goc", "key": COL_ORIGINAL, "label": COL_ORIGINAL},
@@ -100,6 +100,7 @@ EXPORT_COLUMN_DEFS: list[dict[str, str]] = [
     {"slug": "chuoi", "key": COL_CHAIN, "label": COL_CHAIN},
     {"slug": "pw_err", "key": COL_PLAYWRIGHT_ERR, "label": COL_PLAYWRIGHT_ERR},
     {"slug": "latency", "key": COL_LATENCY, "label": COL_LATENCY},
+    {"slug": "trace", "key": COL_TRACE, "label": COL_TRACE},
 ]
 EXPORT_SLUG_TO_KEY = {d["slug"]: d["key"] for d in EXPORT_COLUMN_DEFS}
 EXPORT_DEFAULT_KEYS = [d["key"] for d in EXPORT_COLUMN_DEFS]
