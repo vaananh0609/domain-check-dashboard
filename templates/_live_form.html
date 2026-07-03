@@ -15,7 +15,8 @@
     <div>
       <div class="field">
         <label for="timeout_seconds">Timeout HTTP (giây)</label>
-        <input id="timeout_seconds" name="timeout_seconds" type="number" min="5" max="60" value="{{ form_http_timeout|default(10) }}" />
+        <input id="timeout_seconds" name="timeout_seconds" type="number" min="10" max="45" value="{{ form_http_timeout|default(10) }}" />
+        <!-- <span class="field-hint" id="timeout-hint-network">Timeout HTTP: 5–60 giây.</span> -->
       </div>
       <div class="field">
         <label for="max_domains">Số domain cần test</label>
@@ -51,8 +52,78 @@
           <input id="backoff_seconds" name="backoff_seconds" type="number" min="0" max="3" step="0.05" value="{{ default_backoff }}" />
         </div>
         <div class="field">
+          <label for="browser_profile">Mô phỏng client HTTP</label>
+          <select id="browser_profile" name="browser_profile">
+            <option value="edge" {% if (form_browser_profile|default('edge')) == 'edge' %}selected{% endif %}>
+              Edge 149 — Client Hints + DoH Google
+            </option>
+            <option value="chrome" {% if (form_browser_profile|default('edge')) == 'chrome' %}selected{% endif %}>
+              Chrome 149 — Client Hints + DoH Google
+            </option>
+            <option value="coccoc" {% if (form_browser_profile|default('edge')) == 'coccoc' %}selected{% endif %}>
+              Cốc Cốc 154 — DNS ISP + trình duyệt thật (profile clone)
+            </option>
+          </select>
+          <!-- <span class="field-hint">Bước 3: clone profile (Chrome / Edge / Cốc Cốc) trên ổ E:. Đóng trình duyệt trước khi chạy.</span> -->
+        </div>
+        <div class="field">
+          <label for="chrome_user_data">Chrome profile</label>
+          <input id="chrome_user_data" name="chrome_user_data" type="text" value="{{ default_chrome_user_data|default('') }}" placeholder="E:\User Data Chrome" />
+          <span class="field-hint">Truy cập <code>chrome://version/</code> để lấy đường dẫn user data (Đường dẫn cấu hình). 
+            Dán đúng vị trí của USER DATA, ví dụ: <code>C:\Users\admin\AppData\Local\Google\Chrome\User Data</code><br>Nhớ xóa cache trước khi test</br></span>
+        </div>
+        <div class="field">
+          <label for="edge_user_data">Edge profile</label>
+          <input id="edge_user_data" name="edge_user_data" type="text" value="{{ default_edge_user_data|default('') }}" placeholder="E:\User Data Edge" />
+          <!-- <span class="field-hint">Clone từ <code>%LOCALAPPDATA%\Microsoft\Edge\User Data</code> (vd. <code>E:\User Data Edge</code>).</span> -->
+        </div>
+        <div class="field">
+          <label for="coccoc_user_data">Cốc Cốc profile</label>
+          <input id="coccoc_user_data" name="coccoc_user_data" type="text" value="{{ default_coccoc_user_data|default('') }}" placeholder="E:\User Data Coccoc" />
+          <!-- <span class="field-hint">Clone từ <code>%LOCALAPPDATA%\CocCoc\Browser\User Data</code> (vd. <code>E:\User Data Coccoc</code>).</span> -->
+        </div>
+        <div class="field">
+          <label for="local_dns_raw">Local DNS (ISP) <span class="field-hint">bắt buộc để đồng nhất giữa các máy</span></label>
+          <input id="local_dns_raw" name="local_dns_raw" type="text" value="{{ default_local_dns or '172.16.16.4' }}" placeholder="172.16.16.4" />
+        </div>
+        <div class="field">
           <label for="public_dns_raw">Public DNS servers</label>
           <input id="public_dns_raw" name="public_dns_raw" type="text" value="{{ default_public_dns }}" placeholder="8.8.8.8,1.1.1.1" />
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="hidden" name="enable_step3" value="0" />
+            <input id="enable_step3" name="enable_step3" type="checkbox" value="1" {% if form_enable_step3|default(true) %}checked{% endif %} />
+            Bước 3: Playwright (trình duyệt thật)
+          </label>
+          <span class="field-hint">Tắt: chỉ chạy DNS + HTTP curl (nhanh hơn). Không mở trình duyệt, không Phase 2.</span>
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="hidden" name="enable_phase2" value="0" />
+            <input id="enable_phase2" name="enable_phase2" type="checkbox" value="1" {% if form_enable_phase2|default(true) %}checked{% endif %} />
+            Phase 2: chạy lại ca Timeout (mọi trình duyệt còn lại, headed, deep scan)
+          </label>
+          <span class="field-hint">Sau Phase 1, các domain <strong>Timeout</strong> được thử lại tuần tự bằng <strong>tất cả</strong> profile khác Phase 1 (Edge / Chrome / Cốc Cốc).</span>
+        </div>
+        <div class="field">
+          <label for="phase2_timeout_seconds">Phase 2 timeout (giây)</label>
+          <input id="phase2_timeout_seconds" name="phase2_timeout_seconds" type="number" min="60" max="60" value="{{ form_phase2_timeout|default(60) }}" />
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="hidden" name="browser_headed" value="0" />
+            <input id="browser_headed" name="browser_headed" type="checkbox" value="1" {% if form_browser_headed|default(true) %}checked{% endif %} />
+            Hiện cửa sổ trình duyệt (Bước 3 Playwright)
+          </label>
+          <span class="field-hint">Bật: mở cửa sổ thật (~5s/domain). Tắt: chạy ẩn (nhanh hơn, phù hợp test số lượng lớn).</span>
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="hidden" name="enable_trace" value="0" />
+            <input id="enable_trace" name="enable_trace" type="checkbox" value="1" {% if form_enable_trace|default(true) %}checked{% endif %} />
+            Layer trace (DNS → TCP → TLS → HTTP)
+          </label>
         </div>
       </div>
     </div>
@@ -61,8 +132,15 @@
   <button type="button" id="live-run-btn" class="btn-primary">Run Live Testing</button>
 </form>
 
-<script type="application/json" id="live-col-order">{{ ['STT', COL_ORIGINAL, COL_FINAL_VI, COL_HTTP, COL_CHAIN, COL_FINAL_URL, COL_DNS, COL_DETAIL] | tojson }}</script>
-<script type="application/json" id="live-col-td-classes">{{ ['dt-stt', 'dt-fill', 'dt-status', 'dt-http', 'dt-fill', 'dt-fill', 'dt-fill', 'dt-fill'] | tojson }}</script>
+<div id="live-complete-banner" class="alert alert-success live-complete-banner" hidden>
+  Kiểm thử hoàn tất trong <strong id="live-complete-elapsed">0</strong> giây.
+  <a id="live-complete-view-link" class="btn-link live-complete-link" href="#">Xem kết quả đầy đủ</a>
+  — hoặc mở <a href="/#saved-results" class="btn-link">danh sách đã lưu</a> trên trang chủ.
+</div>
+
+<script type="application/json" id="live-col-order">{{ ['STT', COL_ORIGINAL, COL_FINAL_VI, COL_RESULT_SOURCE, COL_DNS, COL_TCP_80, COL_TCP_443, COL_HTTP, COL_HTTP_VER, COL_TLS, COL_CHAIN, COL_PLAYWRIGHT_ERR, COL_LATENCY] | tojson }}</script>
+<script type="application/json" id="live-col-td-classes">{{ ['dt-stt', 'dt-fill', 'dt-status', 'dt-source', 'dt-dns', 'dt-tcp', 'dt-tcp', 'dt-http', 'dt-http-ver', 'dt-tls', 'dt-chain', 'dt-pw-err', 'dt-latency'] | tojson }}</script>
+<script src="/static/cell-links.js"></script>
 
 <div id="live-stream-wrap" class="live-stream-wrap" hidden>
   <h3 class="live-stream-title">Đang chạy kiểm thử</h3>
@@ -70,23 +148,29 @@
   <div class="live-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="live-progress-track">
     <div class="live-progress-fill" id="live-progress-fill"></div>
   </div>
-  <p class="live-stream-hint small">Kết quả hiển thị theo thứ tự hoàn thành (không phải STT). Khi xong sẽ chuyển trang kết quả đầy đủ.</p>
-  <div class="table-wrap live-stream-table-wrap">
-    <table class="data-table data-table--fixed-cols" id="live-stream-table">
+  <!-- <p class="live-stream-hint small">Kết quả cập nhật theo từng bước (DNS → HTTP → Browser). Bước 3 mở <strong>trình duyệt thật</strong> (Edge hoặc Cốc Cốc đã cài) — mỗi lúc một domain.</p> -->
+  <div class="table-wrap table-wrap--scroll-x live-stream-table-wrap">
+    <table class="data-table data-table--fixed-cols data-table--stream-compact" id="live-stream-table">
       <thead>
         <tr>
           <th class="dt-stt">STT</th>
           <th class="dt-fill">{{ COL_ORIGINAL }}</th>
           <th class="dt-status">{{ COL_FINAL_VI }}</th>
-          <th class="dt-http">{{ COL_HTTP }}</th>
-          <th class="dt-fill">{{ COL_CHAIN }}</th>
-          <th class="dt-fill">{{ COL_FINAL_URL }}</th>
-          <th class="dt-fill">{{ COL_DNS }}</th>
-          <th class="dt-fill">{{ COL_DETAIL }}</th>
+          <th class="dt-source" title="{{ COL_RESULT_SOURCE }}">Src</th>
+          <th class="dt-dns" title="{{ COL_DNS }}">DNS</th>
+          <th class="dt-tcp" title="{{ COL_TCP_80 }}">:80</th>
+          <th class="dt-tcp" title="{{ COL_TCP_443 }}">:443</th>
+          <th class="dt-http">HTTP</th>
+          <th class="dt-http-ver" title="{{ COL_HTTP_VER }}">Ver</th>
+          <th class="dt-tls" title="{{ COL_TLS }}">TLS</th>
+          <th class="dt-chain" title="{{ COL_CHAIN }}">Redirect</th>
+          <th class="dt-pw-err" title="{{ COL_PLAYWRIGHT_ERR }}">PW err</th>
+          <th class="dt-latency" title="{{ COL_LATENCY }}">ms</th>
         </tr>
       </thead>
       <tbody id="live-stream-tbody"></tbody>
     </table>
+    <p class="live-stream-empty-hint" id="live-stream-empty-hint">Chờ dòng kết quả đầu tiên…</p>
   </div>
 </div>
 
@@ -129,13 +213,87 @@
       }
     });
 
+    var dnsColKeys = {
+      "DNS": 1
+    };
+    function isDnsEvidenceEmpty(s) {
+      return !s || s === "—";
+    }
+    function fillDnsCell(td, key, s) {
+      td.textContent = s;
+      if (dnsColKeys[key] && s) td.title = s;
+    }
+    function fillStatusCell(td, s, row) {
+      td.textContent = "";
+      if (!s) return;
+      var pill = document.createElement("span");
+      pill.className = "status-pill";
+      var cls = statusRowClass(row["Trạng_Thái"] || "");
+      if (cls) {
+        pill.classList.add("status-pill--" + cls);
+      } else if (s && s.indexOf("Đang") === 0) {
+        pill.classList.add("status-pill--pending");
+      } else if (s && phase2PendingRe.test(s)) {
+        pill.classList.add("status-pill--pending");
+      }
+      pill.textContent = s;
+      td.appendChild(pill);
+    }
     function statusRowClass(st) {
       var m = {
         "BLOCKED": "blocked",
         "LEAKED": "leaked",
-        "DEAD DOMAIN": "dead"
+        "DEAD DOMAIN": "dead",
+        "TIMEOUT": "timeout"
       };
       return m[st] || "";
+    }
+    var phase2PendingRe = /^Phase 2/;
+    var optionalColIdx = {};
+    var rowByStt = {};
+    function upsertRow(row) {
+      var tbody = document.getElementById("live-stream-tbody");
+      if (!tbody || !colOrder.length) return;
+      var stt = row["STT"];
+      if (stt == null || stt === undefined) {
+        appendRow(row);
+        return;
+      }
+      var tr = rowByStt[stt];
+      if (!tr) {
+        appendRow(row);
+        rowByStt[stt] = tbody.lastElementChild;
+        return;
+      }
+      tr.className = "row-" + statusRowClass(row["Trạng_Thái"] || "");
+      colOrder.forEach(function (key, idx) {
+        var td = tr.children[idx];
+        if (!td) return;
+        var v = row[key];
+        var s = v != null && v !== undefined ? String(v).trim() : "";
+        if (dnsColKeys[key] && isDnsEvidenceEmpty(s)) {
+          var prev = (td.textContent || "").trim();
+          if (prev && prev !== "—") {
+            s = prev;
+          }
+        }
+        if (key === "TLS/SSL" && row._tls_html) {
+          td.innerHTML = row._tls_html;
+        } else if (key === "Status") {
+          fillStatusCell(td, s, row);
+        } else if (window.CellLinks && window.CellLinks.isLinkColumn(key)) {
+          td.textContent = "";
+          if (!window.CellLinks.appendCellLink(td, s)) {
+            if (!s) td.classList.add("td-empty");
+          }
+        } else {
+          fillDnsCell(td, key, s);
+        }
+        td.className = colTdClasses[idx] || "dt-fill";
+        if (!s) td.classList.add("td-empty");
+        if (optionalColIdx[idx]) td.classList.add("col-optional");
+        if (key === "Domain") td.classList.add("td-original");
+      });
     }
     function appendRow(row) {
       var tbody = document.getElementById("live-stream-tbody");
@@ -145,13 +303,36 @@
       colOrder.forEach(function (key, idx) {
         var td = document.createElement("td");
         var v = row[key];
-        td.textContent = v != null && v !== undefined ? String(v) : "";
+        var s = v != null && v !== undefined ? String(v).trim() : "";
+        if (dnsColKeys[key] && isDnsEvidenceEmpty(s)) {
+          var prev = (td.textContent || "").trim();
+          if (prev && prev !== "—") {
+            s = prev;
+          }
+        }
+        if (key === "TLS/SSL" && row._tls_html) {
+          td.innerHTML = row._tls_html;
+        } else if (key === "Status") {
+          fillStatusCell(td, s, row);
+        } else if (window.CellLinks && window.CellLinks.isLinkColumn(key)) {
+          if (!window.CellLinks.appendCellLink(td, s)) {
+            if (!s) td.classList.add("td-empty");
+          }
+        } else {
+          fillDnsCell(td, key, s);
+        }
         td.className = colTdClasses[idx] || "dt-fill";
-        if (idx === 1) td.classList.add("td-original");
-        if (idx === 7) td.classList.add("td-detail");
+        if (!s) td.classList.add("td-empty");
+        if (optionalColIdx[idx]) td.classList.add("col-optional");
+        if (key === "Domain") td.classList.add("td-original");
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
+      if (row["STT"] != null && row["STT"] !== undefined) {
+        rowByStt[row["STT"]] = tr;
+      }
+      var hint = document.getElementById("live-stream-empty-hint");
+      if (hint) hint.hidden = true;
     }
     function setProgress(done, total) {
       var pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
@@ -169,8 +350,37 @@
       var wrap = document.getElementById("live-stream-wrap");
       var tbody = document.getElementById("live-stream-tbody");
       if (tbody) tbody.innerHTML = "";
+      rowByStt = {};
+      var hint = document.getElementById("live-stream-empty-hint");
+      if (hint) hint.hidden = false;
       if (wrap) wrap.hidden = true;
       setProgress(0, 0);
+      var banner = document.getElementById("live-complete-banner");
+      if (banner) banner.hidden = true;
+    }
+
+    function onRunComplete(data) {
+      var banner = document.getElementById("live-complete-banner");
+      var elapsedEl = document.getElementById("live-complete-elapsed");
+      var link = document.getElementById("live-complete-view-link");
+      if (elapsedEl && data.elapsed_seconds != null) {
+        elapsedEl.textContent = String(Math.round(data.elapsed_seconds * 10) / 10);
+      }
+      if (link && data.result_id) {
+        link.href = "/results/" + encodeURIComponent(data.result_id);
+      }
+      if (banner) banner.hidden = false;
+      if (window.SavedResults && data.saved_item) {
+        window.SavedResults.prepend(data.saved_item);
+      }
+      if (runBtn) {
+        runBtn.disabled = false;
+        runBtn.textContent = "Run Live Testing";
+      }
+      try {
+        var anchor = document.getElementById("saved-results");
+        if (anchor) anchor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (e4) {}
     }
 
     async function runStream(fd) {
@@ -213,10 +423,12 @@
             }
             if (data.total != null) setProgress(0, data.total);
           } else if (eventName === "row") {
-            if (data.row) appendRow(data.row);
+            if (data.row) upsertRow(data.row);
             if (data.done != null && data.total != null) setProgress(data.done, data.total);
+          } else if (eventName === "row_patch") {
+            if (data.row) upsertRow(data.row);
           } else if (eventName === "complete") {
-            window.location.href = "/results/" + encodeURIComponent(data.result_id);
+            onRunComplete(data);
             return true;
           } else if (eventName === "error") {
             throw new Error(data.message || "Lỗi không xác định");
@@ -226,23 +438,45 @@
       return false;
     }
 
+    function syncStep3Dependents() {
+      var step3 = document.getElementById("enable_step3");
+      var phase2 = document.getElementById("enable_phase2");
+      var headed = document.getElementById("browser_headed");
+      var on = !step3 || step3.checked;
+      [phase2, headed].forEach(function (el) {
+        if (!el) return;
+        el.disabled = !on;
+        if (!on) el.checked = false;
+      });
+    }
+    var step3El = document.getElementById("enable_step3");
+    if (step3El) {
+      step3El.addEventListener("change", syncStep3Dependents);
+      syncStep3Dependents();
+    }
+
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       if (!form.checkValidity()) return;
       var wrap = document.getElementById("live-stream-wrap");
       var tbody = document.getElementById("live-stream-tbody");
       if (tbody) tbody.innerHTML = "";
+      rowByStt = {};
+      var hint = document.getElementById("live-stream-empty-hint");
+      if (hint) hint.hidden = false;
       if (wrap) wrap.hidden = false;
+      var completeBanner = document.getElementById("live-complete-banner");
+      if (completeBanner) completeBanner.hidden = true;
       if (runBtn) {
         runBtn.disabled = true;
         runBtn.textContent = "Đang chạy…";
       }
       var fd = new FormData(form);
-      var redirected = false;
+      var completed = false;
       runStream(fd)
         .then(function (r) {
-          redirected = !!r;
-          if (!redirected) {
+          completed = !!r;
+          if (!completed) {
             alert("Luồng kết thúc bất thường (không nhận được tín hiệu hoàn tất).");
             resetLiveUi();
           }
@@ -252,7 +486,7 @@
           resetLiveUi();
         })
         .finally(function () {
-          if (runBtn && !redirected) {
+          if (runBtn && !completed) {
             runBtn.disabled = false;
             runBtn.textContent = "Run Live Testing";
           }

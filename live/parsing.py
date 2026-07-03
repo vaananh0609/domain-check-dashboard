@@ -1,3 +1,4 @@
+import html
 import ipaddress
 import re
 
@@ -71,3 +72,17 @@ def browse_url_for_cell(text: str) -> str:
     if is_ipv4(host_only):
         return f"http://{host_part}"
     return f"https://{host_only}"
+
+
+def cell_link_html(text: str) -> str:
+    """HTML link — Ctrl+click mở tab mới; click thường không rời dashboard."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    href = browse_url_for_cell(raw)
+    if not href:
+        return html.escape(raw)
+    return (
+        f'<a class="link-cell" href="{html.escape(href, quote=True)}" '
+        f'title="Ctrl+click để mở trong tab mới">{html.escape(raw)}</a>'
+    )

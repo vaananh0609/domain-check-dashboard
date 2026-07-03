@@ -1,0 +1,488 @@
+<h2 class="section-title" id="saved-results">2) Kết quả đã lưu</h2>
+<!-- <p class="caption saved-results-caption">Các phiên kiểm thử gần đây được lưu tạm trên máy chủ. Tích chọn <strong>2–5 phiên</strong> rồi bấm <strong>So sánh</strong>, hoặc <strong>Xem kết quả</strong> từng phiên. Hiển thị {{ saved_results_page_size|default(10) }} phiên mỗi trang.</p> -->
+
+<div class="saved-results-panel">
+  <div class="saved-results-toolbar">
+    <a id="saved-compare-btn" class="btn-primary saved-compare-btn saved-compare-btn--disabled" href="#" aria-disabled="true">So sánh đã chọn (0)</a>
+    <button type="button" id="saved-delete-btn" class="btn-danger btn-sm saved-delete-btn saved-delete-btn--disabled" disabled aria-disabled="true">Xóa đã chọn</button>
+    <button type="button" id="saved-delete-all-btn" class="btn-danger btn-sm saved-delete-all-btn"{% if not saved_results|default([]) and (saved_results_total|default(0)) <= 0 %} disabled{% endif %}>Xóa tất cả</button>
+    <button type="button" id="saved-compare-clear" class="btn-secondary btn-sm" hidden>Bỏ chọn</button>
+    <span class="field-hint saved-compare-hint">Tối đa 5 phiên để so sánh</span>
+    <div class="saved-results-pager" id="saved-results-pager"{% if (saved_results_total|default(0)) <= (saved_results_page_size|default(10)) %} hidden{% endif %}>
+      <button type="button" id="saved-page-prev" class="btn-secondary btn-sm saved-page-btn" aria-label="Trang trước" disabled>←</button>
+      <span class="saved-page-label" id="saved-page-label">Trang {{ saved_results_page|default(1) }}</span>
+      <button type="button" id="saved-page-next" class="btn-secondary btn-sm saved-page-btn" aria-label="Trang sau">→</button>
+    </div>
+  </div>
+  <div class="table-wrap saved-results-table-wrap">
+    <table class="data-table saved-results-table" id="saved-results-table">
+      <thead>
+        <tr>
+          <th class="saved-col-check" title="Chọn để so sánh hoặc xóa">
+            <input type="checkbox" id="saved-select-all-page" class="saved-select-all-page" aria-label="Chọn tất cả trang này" title="Chọn tất cả trang này" />
+          </th>
+          <th>Thời gian</th>
+          <th>File / tên</th>
+          <th>Trình duyệt</th>
+          <th>Tổng</th>
+          <th>Blocked</th>
+          <th>Timeout</th>
+          <th>Leaked</th>
+          <th>Dead</th>
+          <th>Thời gian chạy</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="saved-results-tbody">
+        {% for item in saved_results|default([]) %}
+        <tr data-result-id="{{ item.id }}" class="saved-result-row{% if highlight_result_id and item.id == highlight_result_id %} saved-result-row--highlight{% endif %}">
+          <td class="saved-col-check">
+            <input type="checkbox" class="saved-compare-cb" value="{{ item.id }}" aria-label="Chọn phiên {{ item.created_label }}" />
+          </td>
+          <td class="saved-col-time">{{ item.created_label }}</td>
+          <td class="saved-col-title">{{ item.title }}</td>
+          <td class="saved-col-browser">{{ item.browser_profile_label or '—' }}</td>
+          <td class="saved-col-num">{{ item.total }}</td>
+          <td class="saved-col-num saved-col-blocked">{{ item.blocked }}</td>
+          <td class="saved-col-num saved-col-timeout">{{ item.timeout|default(0) }}</td>
+          <td class="saved-col-num saved-col-leaked">{{ item.leaked }}</td>
+          <td class="saved-col-num saved-col-dead">{{ item.dead }}</td>
+          <td class="saved-col-elapsed">{{ "%.1f"|format(item.elapsed_seconds) }}s</td>
+          <td class="saved-col-action saved-col-actions">
+            <a class="btn-secondary btn-sm" href="/results/{{ item.id }}">Xem</a>
+            <button type="button" class="btn-danger btn-sm saved-row-delete" data-result-id="{{ item.id }}" title="Xóa phiên này">×</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="saved-results-empty" id="saved-results-empty"{% if saved_results|default([]) %} hidden{% endif %}>Chưa có phiên nào được lưu. Chạy kiểm thử ở trên để thêm vào danh sách.</p>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var MAX_COMPARE = 5;
+    var MIN_COMPARE = 2;
+    var PAGE_SIZE = {{ saved_results_page_size|default(10) }};
+    var state = {
+      page: {{ saved_results_page|default(1) }},
+      total: {{ saved_results_total|default(0) }},
+      pageCount: 1,
+      loading: false,
+    };
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function pageCountFromTotal(total) {
+      return total > 0 ? Math.ceil(total / PAGE_SIZE) : 1;
+    }
+
+    state.pageCount = pageCountFromTotal(state.total);
+
+    function selectedIds() {
+      return Array.prototype.slice
+        .call(document.querySelectorAll(".saved-compare-cb:checked"))
+        .map(function (el) { return el.value; });
+    }
+
+    function compareIds(ids) {
+      return ids.slice(0, MAX_COMPARE);
+    }
+
+    function updateSelectAllUi() {
+      var master = document.getElementById("saved-select-all-page");
+      if (!master) return;
+      var boxes = document.querySelectorAll(".saved-compare-cb");
+      var checked = document.querySelectorAll(".saved-compare-cb:checked");
+      if (!boxes.length) {
+        master.checked = false;
+        master.indeterminate = false;
+        master.disabled = true;
+        return;
+      }
+      master.disabled = state.loading;
+      master.checked = checked.length === boxes.length;
+      master.indeterminate = checked.length > 0 && checked.length < boxes.length;
+    }
+
+    function updateSelectionUi() {
+      var ids = selectedIds();
+      var compareBtn = document.getElementById("saved-compare-btn");
+      var deleteBtn = document.getElementById("saved-delete-btn");
+      var deleteAllBtn = document.getElementById("saved-delete-all-btn");
+      var clearBtn = document.getElementById("saved-compare-clear");
+      var n = ids.length;
+      var compareN = compareIds(ids).length;
+
+      if (compareBtn) {
+        compareBtn.textContent = "So sánh (" + compareN + ")";
+        if (compareN >= MIN_COMPARE && compareN <= MAX_COMPARE && ids.length <= MAX_COMPARE) {
+          compareBtn.href = "/compare?ids=" + encodeURIComponent(compareIds(ids).join(","));
+          compareBtn.classList.remove("saved-compare-btn--disabled");
+          compareBtn.setAttribute("aria-disabled", "false");
+        } else {
+          compareBtn.href = "#";
+          compareBtn.classList.add("saved-compare-btn--disabled");
+          compareBtn.setAttribute("aria-disabled", "true");
+        }
+      }
+
+      if (deleteBtn) {
+        var canDelete = n > 0 && !state.loading;
+        deleteBtn.disabled = !canDelete;
+        deleteBtn.classList.toggle("saved-delete-btn--disabled", !canDelete);
+        deleteBtn.setAttribute("aria-disabled", canDelete ? "false" : "true");
+        deleteBtn.textContent = n > 0 ? "Xóa đã chọn (" + n + ")" : "Xóa đã chọn";
+      }
+
+      if (deleteAllBtn) {
+        deleteAllBtn.disabled = state.total <= 0 || state.loading;
+      }
+
+      if (clearBtn) clearBtn.hidden = n === 0;
+      updateSelectAllUi();
+    }
+
+    function onCheckboxChange() {
+      var ids = selectedIds();
+      var hint = document.querySelector(".saved-compare-hint");
+      if (hint) {
+        hint.textContent = ids.length > MAX_COMPARE
+          ? "Đã chọn " + ids.length + " (so sánh tối đa " + MAX_COMPARE + ")"
+          : "Tối đa 5 phiên để so sánh";
+      }
+      updateSelectionUi();
+    }
+
+    function bindRowCheckbox(tr) {
+      var cb = tr.querySelector(".saved-compare-cb");
+      if (cb) cb.addEventListener("change", onCheckboxChange);
+    }
+
+    function bindRowDelete(tr) {
+      var btn = tr.querySelector(".saved-row-delete");
+      if (!btn) return;
+      btn.addEventListener("click", function () {
+        var rid = btn.getAttribute("data-result-id") || "";
+        if (rid) {
+          deleteByIds([rid], "Xóa phiên này? Hành động không thể hoàn tác.");
+        }
+      });
+    }
+
+    function updatePagerUi() {
+      var pager = document.getElementById("saved-results-pager");
+      var label = document.getElementById("saved-page-label");
+      var prevBtn = document.getElementById("saved-page-prev");
+      var nextBtn = document.getElementById("saved-page-next");
+      var empty = document.getElementById("saved-results-empty");
+
+      state.pageCount = pageCountFromTotal(state.total);
+      if (state.page > state.pageCount) state.page = state.pageCount;
+
+      if (label) {
+        label.textContent = state.total > 0
+          ? "Trang " + state.page + " / " + state.pageCount + " · " + state.total + " phiên"
+          : "Trang 1";
+      }
+      if (pager) pager.hidden = state.total <= PAGE_SIZE;
+      if (prevBtn) prevBtn.disabled = state.page <= 1 || state.loading;
+      if (nextBtn) nextBtn.disabled = state.page >= state.pageCount || state.loading;
+      if (empty) empty.hidden = state.total > 0;
+    }
+
+    function buildRow(item, highlight) {
+      var tr = document.createElement("tr");
+      tr.className = "saved-result-row" + (highlight ? " saved-result-row--highlight" : "");
+      tr.setAttribute("data-result-id", item.id);
+      var elapsed = item.elapsed_seconds != null ? Number(item.elapsed_seconds).toFixed(1) + "s" : "—";
+      var browser = item.browser_profile_label || "—";
+      tr.innerHTML =
+        '<td class="saved-col-check"><input type="checkbox" class="saved-compare-cb" value="' +
+        escapeHtml(item.id) +
+        '" aria-label="Chọn phiên" /></td>' +
+        '<td class="saved-col-time">' + escapeHtml(item.created_label || "") + "</td>" +
+        '<td class="saved-col-title">' + escapeHtml(item.title || "domains") + "</td>" +
+        '<td class="saved-col-browser">' + escapeHtml(browser) + "</td>" +
+        '<td class="saved-col-num">' + (item.total != null ? item.total : 0) + "</td>" +
+        '<td class="saved-col-num saved-col-blocked">' + (item.blocked != null ? item.blocked : 0) + "</td>" +
+        '<td class="saved-col-num saved-col-timeout">' + (item.timeout != null ? item.timeout : 0) + "</td>" +
+        '<td class="saved-col-num saved-col-leaked">' + (item.leaked != null ? item.leaked : 0) + "</td>" +
+        '<td class="saved-col-num saved-col-dead">' + (item.dead != null ? item.dead : 0) + "</td>" +
+        '<td class="saved-col-elapsed">' + elapsed + "</td>" +
+        '<td class="saved-col-action saved-col-actions">' +
+        '<a class="btn-secondary btn-sm" href="/results/' + encodeURIComponent(item.id) + '">Xem</a> ' +
+        '<button type="button" class="btn-danger btn-sm saved-row-delete" data-result-id="' +
+        escapeHtml(item.id) +
+        '" title="Xóa phiên này">×</button></td>';
+      bindRowCheckbox(tr);
+      bindRowDelete(tr);
+      return tr;
+    }
+
+    function renderRows(items, highlightId) {
+      var tbody = document.getElementById("saved-results-tbody");
+      if (!tbody) return;
+      tbody.innerHTML = "";
+      (items || []).forEach(function (item) {
+        var highlight = highlightId && item.id === highlightId;
+        tbody.appendChild(buildRow(item, highlight));
+      });
+      updateSelectionUi();
+    }
+
+    function clearHighlights() {
+      document.querySelectorAll(".saved-result-row--highlight").forEach(function (row) {
+        row.classList.remove("saved-result-row--highlight");
+      });
+    }
+
+    function fetchAndRenderPage(page, highlightId) {
+      state.loading = true;
+      updateSelectionUi();
+      updatePagerUi();
+      return fetch("/api/saved-results?page=" + encodeURIComponent(page) + "&per_page=" + PAGE_SIZE)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          state.page = data.page || page;
+          state.total = data.total != null ? data.total : 0;
+          state.pageCount = data.page_count || pageCountFromTotal(state.total);
+          renderRows(data.items || [], highlightId || "");
+          updatePagerUi();
+        })
+        .catch(function () {
+          window.alert("Không tải được danh sách kết quả đã lưu.");
+        })
+        .finally(function () {
+          state.loading = false;
+          updateSelectionUi();
+          updatePagerUi();
+        });
+    }
+
+    function loadPage(page, highlightId) {
+      if (state.loading) return Promise.resolve();
+      return fetchAndRenderPage(page, highlightId);
+    }
+
+    function removeRowsFromDom(ids) {
+      (ids || []).forEach(function (id) {
+        var row = document.querySelector('tr[data-result-id="' + id + '"]');
+        if (row) row.remove();
+      });
+    }
+
+    function syncUiAfterLocalDelete(removedCount) {
+      state.total = Math.max(0, state.total - removedCount);
+      var tbody = document.getElementById("saved-results-tbody");
+      var master = document.getElementById("saved-select-all-page");
+      if (master) {
+        master.checked = false;
+        master.indeterminate = false;
+      }
+      if (tbody && tbody.children.length === 0) {
+        if (state.total > 0) {
+          var nextPage = state.page > 1 && state.total <= (state.page - 1) * PAGE_SIZE
+            ? state.page - 1
+            : state.page;
+          return fetchAndRenderPage(nextPage);
+        }
+      }
+      updatePagerUi();
+      updateSelectionUi();
+      return Promise.resolve();
+    }
+
+    function deleteByIds(ids, confirmMsg) {
+      if (!ids || !ids.length || state.loading) return;
+      if (confirmMsg && !window.confirm(confirmMsg)) return;
+
+      state.loading = true;
+      updateSelectionUi();
+      fetch("/api/saved-results/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: ids }),
+      })
+        .then(function (res) {
+          if (!res.ok) {
+            return res.json().then(function (body) {
+              throw new Error((body && body.detail) || "Xóa thất bại");
+            });
+          }
+          return res.json();
+        })
+        .then(function () {
+          removeRowsFromDom(ids);
+          return syncUiAfterLocalDelete(ids.length);
+        })
+        .catch(function (err) {
+          window.alert(err.message || "Không xóa được phiên đã chọn.");
+        })
+        .finally(function () {
+          state.loading = false;
+          updateSelectionUi();
+          updatePagerUi();
+        });
+    }
+
+    function deleteSelected() {
+      var ids = selectedIds();
+      if (!ids.length) return;
+      var msg = ids.length === 1
+        ? "Xóa 1 phiên đã chọn? Hành động này không thể hoàn tác."
+        : "Xóa " + ids.length + " phiên đã chọn? Hành động này không thể hoàn tác.";
+      deleteByIds(ids, msg);
+    }
+
+    function deleteAllSessions() {
+      if (state.total <= 0 || state.loading) return;
+      var msg = "Xóa tất cả " + state.total + " phiên đã lưu? Hành động này không thể hoàn tác.";
+      if (!window.confirm(msg)) return;
+
+      state.loading = true;
+      updateSelectionUi();
+      fetch("/api/saved-results/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      })
+        .then(function (res) {
+          if (!res.ok) {
+            return res.json().then(function (body) {
+              throw new Error((body && body.detail) || "Xóa thất bại");
+            });
+          }
+          return res.json();
+        })
+        .then(function () {
+          state.total = 0;
+          state.page = 1;
+          renderRows([]);
+          updatePagerUi();
+        })
+        .catch(function (err) {
+          window.alert(err.message || "Không xóa được danh sách.");
+        })
+        .finally(function () {
+          state.loading = false;
+          updateSelectionUi();
+          updatePagerUi();
+        });
+    }
+
+    document.querySelectorAll(".saved-compare-cb").forEach(function (cb) {
+      cb.addEventListener("change", onCheckboxChange);
+    });
+    document.querySelectorAll(".saved-row-delete").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var rid = btn.getAttribute("data-result-id") || "";
+        if (rid) deleteByIds([rid], "Xóa phiên này? Hành động không thể hoàn tác.");
+      });
+    });
+
+    var selectAllPage = document.getElementById("saved-select-all-page");
+    if (selectAllPage) {
+      selectAllPage.addEventListener("change", function () {
+        var checked = selectAllPage.checked;
+        document.querySelectorAll(".saved-compare-cb").forEach(function (cb) {
+          cb.checked = checked;
+        });
+        onCheckboxChange();
+      });
+    }
+
+    var compareBtn = document.getElementById("saved-compare-btn");
+    if (compareBtn) {
+      compareBtn.addEventListener("click", function (e) {
+        if (compareBtn.classList.contains("saved-compare-btn--disabled")) {
+          e.preventDefault();
+        }
+      });
+    }
+
+    var deleteBtn = document.getElementById("saved-delete-btn");
+    if (deleteBtn) deleteBtn.addEventListener("click", deleteSelected);
+
+    var deleteAllBtn = document.getElementById("saved-delete-all-btn");
+    if (deleteAllBtn) deleteAllBtn.addEventListener("click", deleteAllSessions);
+
+    var clearBtn = document.getElementById("saved-compare-clear");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", function () {
+        document.querySelectorAll(".saved-compare-cb:checked").forEach(function (cb) {
+          cb.checked = false;
+        });
+        updateSelectionUi();
+      });
+    }
+
+    var prevBtn = document.getElementById("saved-page-prev");
+    if (prevBtn) {
+      prevBtn.addEventListener("click", function () {
+        if (state.page > 1) loadPage(state.page - 1);
+      });
+    }
+
+    var nextBtn = document.getElementById("saved-page-next");
+    if (nextBtn) {
+      nextBtn.addEventListener("click", function () {
+        if (state.page < state.pageCount) loadPage(state.page + 1);
+      });
+    }
+
+    window.SavedResults = {
+      prepend: function (item) {
+        if (!item || !item.id) return;
+        var tbody = document.getElementById("saved-results-tbody");
+        if (!tbody) return;
+        var existing = document.querySelector('tr[data-result-id="' + item.id + '"]');
+        var isNew = !existing;
+
+        if (state.page !== 1) {
+          if (isNew) state.total += 1;
+          updatePagerUi();
+          loadPage(1, item.id);
+          return;
+        }
+
+        if (existing) existing.remove();
+        clearHighlights();
+        tbody.insertBefore(buildRow(item, true), tbody.firstChild);
+        while (tbody.children.length > PAGE_SIZE) {
+          tbody.removeChild(tbody.lastChild);
+        }
+        if (isNew) state.total += 1;
+        updatePagerUi();
+        updateSelectionUi();
+      },
+      highlight: function (id) {
+        if (!id) return;
+        var row = document.querySelector('tr[data-result-id="' + id + '"]');
+        if (!row) {
+          loadPage(1, id);
+          return;
+        }
+        clearHighlights();
+        row.classList.add("saved-result-row--highlight");
+      },
+    };
+
+    updateSelectionUi();
+    updatePagerUi();
+
+    var highlightId = {{ highlight_result_id|default("")|tojson }};
+    if (highlightId) {
+      try {
+        document.getElementById("saved-results").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (e) {}
+    }
+  })();
+</script>

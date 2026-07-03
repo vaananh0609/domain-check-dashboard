@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dynamic Live Testing</title>
-  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/app.css?v=23" />
 </head>
 <body>
   <div class="layout">
@@ -16,6 +16,8 @@
     {% endif %}
 
     {% include "_live_form.html" %}
+
+    {% include "_saved_results.html" %}
   </div>
 </body>
 </html>

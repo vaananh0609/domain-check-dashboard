@@ -1,349 +1,714 @@
-# Phân loại theo tuyến local; public DNS: DEAD (NXDOMAIN) + so DNS filter/sinkhole.
-# Phân loại theo tuyến local; public DNS: DEAD (NXDOMAIN) + so DNS filter/sinkhole.
+# Luồng tuần tự: (1) DNS → (2) HTTP TCP/443 → (3) Playwright (cửa sổ hiển thị).
 
 import asyncio
-import json
-import re
-from typing import Any, Optional
-from urllib.parse import quote
+import time
+from typing import Any, Awaitable, Callable, Optional
 
 import aiodns
-import dns.asyncresolver
 from curl_cffi.requests import AsyncSession
 
 from .constants import (
     BACKOFF_BASE_SECONDS,
+    COL_CHAIN,
+    COL_DNS,
+    COL_DNS_LOCAL,
+    COL_DNS_PUBLIC,
+    COL_FINAL_VI,
+    COL_HTTP,
+    COL_HTTP_VER,
+    COL_LATENCY,
+    COL_ORIGINAL,
+    COL_PLAYWRIGHT_ERR,
+    COL_TLS,
+    COL_TRACE,
     DNS_TIMEOUT_SECONDS,
     HTTP_RETRIES,
-    STATUS_BLOCKED,
+    SOURCE_DNS_A_AAAA,
+    SOURCE_HTTP_REFERENCE,
     STATUS_DEAD,
     STATUS_LEAKED,
+    STATUS_TIMEOUT,
 )
 from .dns import (
     detect_dns_sinkhole,
-    resolve_a_and_aaaa,
-    resolve_a_and_aaaa_with_rcodes,
+    evaluate_dns_step1,
+    prefer_ipv4_first,
+    real_ips_from_list,
+    resolve_dns_step1_parallel,
+    resolve_doh_step1_parallel,
+    resolve_probe_ips,
 )
-from .http_fetch import describe_response, extract_host_and_urls, send_live_request
-from .labels import build_live_row_dict
+from .evidence import LayerEvidence
+from .probe_config import active_browser_profile
+from .http_fetch import (
+    extract_host_and_urls,
+    send_live_request_tcp_reference,
+)
+from .http_models import HttpProbeResult
+from .http_status import (
+    KIND_CENSORSHIP_BLOCK,
+    KIND_CLIENT_DEAD,
+    KIND_ISP_REDIRECT_BLOCK,
+    KIND_REDIRECT_LOOP,
+    KIND_SERVER_DEAD,
+    analyze_http_context,
+)
+from .labels import (
+    build_live_row_dict,
+    browser_result_source,
+    dns_evidence_columns_dict,
+)
 from .parsing import is_ipv4
+from .phase2 import (
+    PHASE2_FINAL_TIMEOUT_DETAIL,
+    _ips_from_dns_cell,
+    _rcode_from_dns_cell,
+    merge_phase2_result,
+)
+from .browser_profiles import get_browser_profile
+from .playwright_probe import (
+    BrowserProbeResult,
+    clamp_browser_timeout_ms,
+    probe_url_browser,
+)
+from .tls_probe import (
+    TlsProbeResult,
+    format_tls_column,
+    format_tls_html,
+    probe_tls_on_ips,
+    probe_tls_version,
+    probe_tcp_both,
+    run_layer_trace,
+)
 
-CLOUDFLARE_WORKER_URL = "https://falling-glade-cacd.nguyenthivananh2021.workers.dev/?url="
+VI_STEP_DNS = "Đang DNS…"
+VI_STEP_HTTP = "Đang HTTP…"
+VI_STEP_BROWSER = "Đang Browser…"
+VI_STEP_PHASE2 = "Phase 2 Deep…"
 
+_TLS_DEAD_KINDS = frozenset({"tcp_refused", "cert_expired", "cert_mismatch"})
 
-def _http_display_from_worker_error(worker_result: dict[str, Any]) -> str:
-    """
-    Khi Worker không trả JSON có `status` — vẫn điền cột Mã HTTP (mã edge / mô tả lỗi ngắn).
-    """
-    err = str(worker_result.get("error", "") or "").strip()
-    if not err:
-        return "—"
-    m = re.match(r"worker_http_(\d+)$", err)
-    if m:
-        return m.group(1)
-    if err.startswith("worker_fail:"):
-        tail = err[len("worker_fail:") :].strip()
-        return f"Worker: {tail[:120]}" if tail else "Worker: fail"
-    if err == "worker_json_parse":
-        return "Worker: JSON parse"
-    if err == "worker_json_invalid":
-        return "Worker: JSON invalid"
-    return f"Worker: {err[:120]}"
+_TLS_FAIL_LABELS = {
+    "sni_reset": "SNI Reset",
+    "timeout": "TLS handshake timeout",
+    "tcp_refused": "TCP Refused",
+    "cert_expired": "Cert Expired",
+    "cert_mismatch": "Cert Mismatch",
+    "ssl_error": "SSL Error",
+}
 
-
-def _raw_worker_status_value(worker_result: dict[str, Any]) -> Any:
-    """Worker có thể dùng `status`, `http_status`, `code`, `http_code`."""
-    for key in ("status", "http_status", "code", "http_code"):
-        if key not in worker_result:
-            continue
-        v = worker_result[key]
-        if v is None:
-            continue
-        if isinstance(v, str) and not v.strip():
-            continue
-        return v
-    return None
-
-
-async def has_ech_record(host: str) -> bool:
-    """Query HTTPS record qua public DNS, kiểm tra ECH param (key 5)."""
-    try:
-        resolver = dns.asyncresolver.Resolver()
-        resolver.nameservers = ["8.8.8.8", "1.1.1.1"]
-        resolver.timeout = 3
-        resolver.lifetime = 3
-        answer = await resolver.resolve(host, "HTTPS")
-        for rdata in answer:
-            params = getattr(rdata, "params", {})
-            if params and 5 in params:
-                return True
-        return False
-    except Exception:
-        return False
+OnPartialCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
-async def probe_tcp(ip: str, port: int = 443, timeout: float = 5.0) -> bool:
-    """True = TCP connect được -> IP không bị chặn tầng mạng local."""
-    try:
-        _reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=timeout)
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
-        return True
-    except Exception:
-        return False
+async def _emit_partial(cb: Optional[OnPartialCallback], row: dict[str, str]) -> None:
+    if cb:
+        await cb(row)
 
 
-def _parse_worker_status_int(raw: Any) -> Optional[int]:
-    """Parse mã HTTP từ JSON (int, float, '523', '523.0', …)."""
-    if raw is None:
-        return None
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, int):
-        return raw if raw > 0 else None
-    if isinstance(raw, float):
-        if raw != raw:
-            return None
-        i = int(raw)
-        return i if i > 0 else None
-    s = str(raw).strip()
-    if not s:
-        return None
-    try:
-        i = int(float(s))
-        return i if i > 0 else None
-    except (ValueError, OverflowError):
-        return None
-
-
-def _worker_final_url(worker_result: dict[str, Any], probe_url: str) -> str:
-    u = (
-        worker_result.get("final_url")
-        or worker_result.get("url")
-        or worker_result.get("finalUrl")
-        or ""
+def _text_implies_timeout(text: str) -> bool:
+    low = (text or "").lower()
+    return (
+        "timeout" in low
+        or "timed out" in low
+        or "connection closed" in low
+        or "err_connection_closed" in low
+        or "sni reset" in low
+        or "sni_reset" in low
     )
-    s = str(u).strip()
-    return s if s else probe_url
 
 
-def _http_col_when_worker_row_missing(worker_result: dict[str, Any]) -> str:
-    """Có `error` hoặc raw status nhưng không build được row — vẫn điền cột HTTP."""
-    err = str(worker_result.get("error", "") or "").strip()
-    if err:
-        return _http_display_from_worker_error(worker_result)
-    raw = _raw_worker_status_value(worker_result)
-    if raw is not None:
-        t = str(raw).strip()
-        if t:
-            return t[:80]
-    return "—"
-
-
-def analyze_http_status(status_code: int) -> str:
-    """
-    Phân loại mã HTTP thống nhất (local và Worker).
-    Trả về SERVER_DEAD | WAF_BLOCK | ALIVE.
-    """
-    if status_code in (500, 502, 504) or (520 <= status_code <= 530):
-        return "SERVER_DEAD"
-    if status_code in (403, 406, 429, 451, 503):
-        return "WAF_BLOCK"
-    return "ALIVE"
-
-
-def _build_worker_row(
-    original_label: str,
-    internal: str,
-    detail: str,
+def _status_for_probe_failure(
     *,
-    proxy_final_url: str,
-    proxy_http_status: int,
+    tls_result: Optional[TlsProbeResult] = None,
+    fail_text: str = "",
+    waf_suspected: bool = False,
+) -> str:
+    """Chưa chốt Blocked — mọi lỗi probe (SNI reset, connection closed, …) → TIMEOUT."""
+    _ = tls_result
+    if waf_suspected or _text_implies_timeout(fail_text):
+        return STATUS_TIMEOUT
+    if tls_result and tls_result.failure_kind in ("timeout", "sni_reset"):
+        return STATUS_TIMEOUT
+    return STATUS_TIMEOUT
+
+
+def _status_for_http_kind(kind: str) -> str:
+    if kind in (KIND_REDIRECT_LOOP, KIND_SERVER_DEAD, KIND_CLIENT_DEAD):
+        return STATUS_DEAD
+    if kind in (KIND_CENSORSHIP_BLOCK, KIND_ISP_REDIRECT_BLOCK):
+        return STATUS_TIMEOUT
+    return STATUS_LEAKED
+
+
+def _tls_fields(result: Optional[TlsProbeResult]) -> dict[str, str]:
+    if not result:
+        return {"tls_version": "—", "tls_html": ""}
+    return {
+        "tls_version": format_tls_column(result),
+        "tls_html": format_tls_html(result),
+    }
+
+
+def _dns_trace_summary(rcode: str, ips: list[str]) -> str:
+    if ips:
+        return f"{rcode} [{', '.join(ips[:3])}]"
+    return rcode
+
+
+def _pub_dns_kw(public_rcode: str, public_ips: list[str]) -> dict[str, Any]:
+    return {
+        "public_dns_rcode": public_rcode,
+        "public_dns_ips": list(public_ips),
+    }
+
+
+def _tcp_probe_ip_list(
+    probe_ips: list[str],
+    public_ips: list[str],
+    local_ips: list[str],
+    evidence: LayerEvidence,
+) -> list[str]:
+    if probe_ips:
+        return prefer_ipv4_first(real_ips_from_list(probe_ips))
+    for ips in (public_ips, local_ips, evidence.google_doh_ips, evidence.cloudflare_doh_ips):
+        real = real_ips_from_list(ips)
+        if real:
+            return prefer_ipv4_first(real)
+    return []
+
+
+async def _fill_tcp_evidence(
+    evidence: LayerEvidence,
+    ips: list[str],
+    timeout: int,
+) -> None:
+    if not ips:
+        return
+    tcp_timeout = min(float(timeout), 8.0)
+    evidence.tcp_80, evidence.tcp_443 = await probe_tcp_both(ips, timeout=tcp_timeout)
+
+
+def _playwright_error_cell(browser: Optional[BrowserProbeResult], fail_text: str = "") -> str:
+    raw = (fail_text or "").strip()
+    if browser and not raw:
+        raw = (browser.error or "").strip()
+    if not raw:
+        return ""
+    return raw[:240]
+
+
+def _row_dns_partial(
+    original_label: str,
     local_rcode: str,
     local_ips: list[str],
+    *,
+    public_rcode: str,
+    public_ips: list[str],
+    pending_vi: str,
     dns_column_suffix: str = "",
+    dns_preserve_from: Optional[dict[str, Any]] = None,
+    **extra: Any,
 ) -> dict[str, str]:
-    """Worker JSON: `status` → Mã HTTP, `final_url` → URL đích (đã gộp fallback probe nếu trống)."""
     return build_live_row_dict(
         original_label,
-        internal,
-        detail,
-        proxy_final_url,
-        str(proxy_http_status),
+        STATUS_DEAD,
+        "",
         "—",
         local_rcode,
         local_ips,
         dns_column_suffix=dns_column_suffix,
+        pending_vi=pending_vi,
+        dns_preserve_from=dns_preserve_from,
+        **_pub_dns_kw(public_rcode, public_ips),
+        **extra,
     )
 
 
-async def _verify_with_worker(target_url: str) -> dict[str, Any]:
-    """Gọi Worker: Luôn cố gắng đọc JSON bất kể status_code để lấy log lỗi chi tiết từ JS."""
-    try:
-        q = quote(target_url, safe="")
-        worker_url = f"{CLOUDFLARE_WORKER_URL}{q}"
-        async with AsyncSession() as ws:
-            res = await ws.get(
-                worker_url,
-                timeout=15,
-                verify=False,
-                impersonate="chrome",
-            )
-
-        # Luôn thử ép kiểu JSON trước (Worker JS của ta luôn trả về JSON)
-        try:
-            data = res.json()
-        except Exception:
-            try:
-                data = json.loads(res.text or "")
-            except Exception:
-                data = None
-
-        # Nếu lấy được JSON hợp lệ từ Worker, trả nguyên dict (giữ các trường cần thiết)
-        if isinstance(data, dict):
-            return data
-
-        # Fallback nếu Worker trả về HTML rác (lỗi nền tảng của Cloudflare)
-        return {"error": f"worker_http_{res.status_code}"}
-
-    except Exception as e:
-        return {"error": f"worker_fail: {str(e)}"}
-
-
-def _row_from_worker_result(
+def _row_dead_both_dns_empty(
     original_label: str,
-    worker_result: dict[str, Any],
     local_rcode: str,
     local_ips: list[str],
     *,
-    public_ips: Optional[list[str]] = None,
-    probe_url: str,
+    public_rcode: str,
+    public_ips: list[str],
     dns_column_suffix: str = "",
-) -> Optional[dict[str, str]]:
-    raw_status = _raw_worker_status_value(worker_result)
-    if raw_status is None:
-        return None
-
-    proxy_final_url = _worker_final_url(worker_result, probe_url)
-    proxy_status = _parse_worker_status_int(raw_status)
-
-    if proxy_status is None:
-        return build_live_row_dict(
-            original_label,
-            STATUS_DEAD,
-            f"Đối chứng Worker: mã HTTP không parse được ({str(raw_status)[:50]!r})",
-            proxy_final_url,
-            str(raw_status).strip()[:80] or "—",
-            "—",
-            local_rcode,
-            local_ips,
-            dns_column_suffix=dns_column_suffix,
-        )
-
-    kind = analyze_http_status(proxy_status)
-    if kind == "SERVER_DEAD":
-        return _build_worker_row(
-            original_label,
-            STATUS_DEAD,
-            f"Máy chủ / origin lỗi toàn cầu (đối chứng HTTP {proxy_status}) → DEAD",
-            proxy_final_url=proxy_final_url,
-            proxy_http_status=proxy_status,
-            local_rcode=local_rcode,
-            local_ips=local_ips,
-            dns_column_suffix=dns_column_suffix,
-        )
-    if kind == "WAF_BLOCK":
-        return _build_worker_row(
-            original_label,
-            STATUS_LEAKED,
-            f"Local lỗi nhưng đối chứng HTTP {proxy_status} (WAF/anti-bot) → LEAKED",
-            proxy_final_url=proxy_final_url,
-            proxy_http_status=proxy_status,
-            local_rcode=local_rcode,
-            local_ips=local_ips,
-            dns_column_suffix=dns_column_suffix,
-        )
-
-    pub_ips = public_ips or []
-    try:
-        if detect_dns_sinkhole(local_ips, pub_ips):
-            return _build_worker_row(
-                original_label,
-                STATUS_BLOCKED,
-                f"DNS sinkhole/local DNS trả IP rác so với public (đối chứng HTTP {proxy_status}) → BLOCKED",
-                proxy_final_url=proxy_final_url,
-                proxy_http_status=proxy_status,
-                local_rcode=local_rcode,
-                local_ips=local_ips,
-                dns_column_suffix=dns_column_suffix,
-            )
-    except Exception:
-        pass
-
-    return _build_worker_row(
+    evidence: Optional[LayerEvidence] = None,
+) -> dict[str, str]:
+    return build_live_row_dict(
         original_label,
-        STATUS_LEAKED,
-        f"Local probe thất bại nhưng đối chứng HTTP {proxy_status} — khả năng lỗi mạng cục bộ/tạm thời → LEAKED",
-        proxy_final_url=proxy_final_url,
-        proxy_http_status=proxy_status,
-        local_rcode=local_rcode,
-        local_ips=local_ips,
+        STATUS_DEAD,
+        "",
+        "—",
+        local_rcode,
+        local_ips,
         dns_column_suffix=dns_column_suffix,
+        evidence=evidence,
+        result_source=SOURCE_DNS_A_AAAA,
+        **_pub_dns_kw(public_rcode, public_ips),
+    )
+
+
+def _row_probe_timeout(
+    original_label: str,
+    local_rcode: str,
+    local_ips: list[str],
+    *,
+    public_rcode: str,
+    public_ips: list[str],
+    dns_column_suffix: str = "",
+    trace: str = "",
+    http_version: str = "",
+    tls_result: Optional[TlsProbeResult] = None,
+    evidence: Optional[LayerEvidence] = None,
+    playwright_error: str = "",
+    dns_preserve_from: Optional[dict[str, Any]] = None,
+    result_source: str = "",
+) -> dict[str, str]:
+    if evidence is not None and playwright_error:
+        evidence.playwright_error = playwright_error
+    return build_live_row_dict(
+        original_label,
+        STATUS_TIMEOUT,
+        "—",
+        "—",
+        local_rcode,
+        local_ips,
+        dns_column_suffix=dns_column_suffix,
+        trace=trace,
+        http_version=http_version,
+        evidence=evidence,
+        dns_preserve_from=dns_preserve_from,
+        result_source=result_source,
+        **_tls_fields(tls_result),
+        **_pub_dns_kw(public_rcode, public_ips),
+    )
+
+
+def _probe_http_cols(probe: Optional[HttpProbeResult]) -> dict[str, str]:
+    if probe is None:
+        return {"http_version": "", "latency": ""}
+    return {
+        "http_version": probe.http_version_label,
+        "latency": probe.latency_label,
+    }
+
+
+async def _probe_http_step2(
+    session: AsyncSession,
+    urls: list[str],
+    *,
+    timeout: int,
+    proxy_url: Optional[str],
+    retries: int,
+    backoff_base: float,
+    connect_host: str,
+    connect_ips: Optional[list[str]] = None,
+) -> Optional[HttpProbeResult]:
+    """
+    Bước 2 — thử từng URL (https rồi http) với retry đầy đủ.
+    Chỉ ép IP (CURLOPT_RESOLVE) khi DNS nghi vấn; mặc định để curl resolve bình thường.
+    """
+    for url in urls:
+        try:
+            probe = await send_live_request_tcp_reference(
+                session,
+                url,
+                timeout=timeout,
+                proxy_url=proxy_url,
+                retries=retries,
+                backoff_base=backoff_base,
+                connect_host=connect_host,
+                connect_ips=connect_ips,
+            )
+            if probe.final_status > 0:
+                return probe
+        except Exception:
+            continue
+    return None
+
+
+def _tls_failure_note(tls_result: TlsProbeResult) -> str:
+    if tls_result.error:
+        return tls_result.error
+    kind = tls_result.failure_kind
+    return _TLS_FAIL_LABELS.get(kind, kind or "TLS handshake fail")
+
+
+def _browser_to_http_probe(browser: BrowserProbeResult) -> HttpProbeResult:
+    return HttpProbeResult(
+        first_status=browser.final_status,
+        final_status=browser.final_status,
+        final_url=browser.final_url or browser.document_url,
+        via=browser.via,
+        http_version_code=0,
+        http_version_override=(browser.browser_http_ver or "").strip(),
     )
 
 
 def _classify_local_http_response(
     original_label: str,
-    _host: str,
-    status_code: int,
-    final_url: str,
-    history_urls: list[str],
-    redirect_chain: str,
+    host: str,
+    probe: HttpProbeResult,
     local_rcode: str,
     local_ips: list[str],
     *,
     dns_column_suffix: str = "",
+    tls_result: Optional[TlsProbeResult] = None,
+    trace: str = "",
+    dns_sinkhole: bool = False,
+    public_rcode: str = "—",
+    public_ips: Optional[list[str]] = None,
+    evidence: Optional[LayerEvidence] = None,
+    dns_preserve_from: Optional[dict[str, Any]] = None,
+    result_source: str = SOURCE_HTTP_REFERENCE,
 ) -> dict[str, str]:
-    http_code = str(status_code)
-    kind = analyze_http_status(status_code)
-    if kind == "SERVER_DEAD":
-        return build_live_row_dict(
-            original_label,
-            STATUS_DEAD,
-            f"Máy chủ / origin lỗi (HTTP {status_code}) — Cloudflare hoặc upstream sập / không tới được origin",
-            final_url,
-            http_code,
-            redirect_chain,
-            local_rcode,
-            local_ips,
-            dns_column_suffix=dns_column_suffix,
-        )
-    if kind == "WAF_BLOCK":
-        return build_live_row_dict(
-            original_label,
-            STATUS_LEAKED,
-            f"Bị tường lửa / WAF chặn probe (HTTP {status_code})",
-            final_url,
-            http_code,
-            redirect_chain,
-            local_rcode,
-            local_ips,
-            dns_column_suffix=dns_column_suffix,
-        )
+    """Bước 2: có mã HTTP → LEAKED trừ ngoại lệ ISP."""
+    tls_kw = _tls_fields(tls_result)
+    probe_kw = _probe_http_cols(probe)
+    pub_kw = _pub_dns_kw(public_rcode, public_ips or [])
+
+    kind = analyze_http_context(probe, original_host=host, dns_sinkhole=dns_sinkhole)
+    status = _status_for_http_kind(kind)
     return build_live_row_dict(
         original_label,
-        STATUS_LEAKED,
-        f"Lọt Gateway | {describe_response(status_code, final_url, history_urls)}",
-        final_url,
-        http_code,
-        redirect_chain,
+        status,
+        probe.http_display,
+        probe.chain_display,
         local_rcode,
         local_ips,
         dns_column_suffix=dns_column_suffix,
+        trace=trace,
+        evidence=evidence,
+        dns_preserve_from=dns_preserve_from,
+        result_source=result_source,
+        **tls_kw,
+        **probe_kw,
+        **pub_kw,
     )
+
+
+async def _probe_tls_sequential(
+    host: str,
+    probe_ips: list[str],
+    *,
+    is_ip_target: bool,
+    timeout: float,
+) -> TlsProbeResult:
+    if is_ip_target:
+        return await probe_tls_version(host, connect_host=host, timeout=timeout)
+    if probe_ips:
+        return await probe_tls_on_ips(host, probe_ips, timeout=timeout)
+    return TlsProbeResult(
+        version="—",
+        negotiated="",
+        error="",
+        attempt_log="",
+        cert_status="—",
+        issuer="—",
+        hostname_match=True,
+    )
+
+
+async def _classify_playwright_step3(
+    original_label: str,
+    host: str,
+    url: str,
+    local_rcode: str,
+    local_ips: list[str],
+    probe_ips: list[str],
+    public_ips: list[str],
+    *,
+    public_rcode: str = "—",
+    timeout: int,
+    tls_result: Optional[TlsProbeResult] = None,
+    is_ip_target: bool = False,
+    enable_trace: bool,
+    browser_headed: bool = False,
+    dns_column_suffix: str = "",
+    dns_sinkhole_flag: bool = False,
+    dns_step1_trace: str = "",
+    session: Optional[AsyncSession] = None,
+    proxy_url: Optional[str] = None,
+    backoff_base: float = BACKOFF_BASE_SECONDS,
+    evidence: Optional[LayerEvidence] = None,
+    dns_preserve_from: Optional[dict[str, Any]] = None,
+) -> dict[str, str]:
+    """Bước 3 — Playwright: chỉ tin mã HTTP document; TLS lấy từ trình duyệt nếu có."""
+    trace_text = (dns_step1_trace or "").strip()
+    row_dns_kw = {
+        "dns_column_suffix": dns_column_suffix,
+        "evidence": evidence,
+        "dns_preserve_from": dns_preserve_from,
+        **_pub_dns_kw(public_rcode, public_ips),
+    }
+    tls_kw = _tls_fields(tls_result)
+    profile = active_browser_profile()
+    browser_source = browser_result_source(profile.id)
+
+    if tls_result is not None:
+        kind = tls_result.failure_kind
+        if kind in _TLS_DEAD_KINDS or tls_result.cert_dead:
+            return build_live_row_dict(
+                original_label,
+                STATUS_DEAD,
+                "—",
+                "—",
+                local_rcode,
+                local_ips,
+                trace=trace_text,
+                result_source=browser_source,
+                **row_dns_kw,
+                **tls_kw,
+            )
+
+    if enable_trace and session is not None:
+
+        async def _http_probe():
+            return await send_live_request_tcp_reference(
+                session,
+                url,
+                timeout=timeout,
+                proxy_url=proxy_url,
+                connect_host=host,
+                connect_ips=probe_ips or local_ips or None,
+            )
+
+        layer = await run_layer_trace(
+            host,
+            url,
+            probe_ips or local_ips,
+            dns_summary=_dns_trace_summary(local_rcode, local_ips),
+            timeout=float(timeout),
+            http_probe_coro=_http_probe,
+        )
+        trace_text = layer.format()
+
+    timeout_ms = clamp_browser_timeout_ms(timeout)
+    browser_via = profile.playwright_via_label
+    try:
+        browser = await probe_url_browser(
+            url,
+            timeout_ms=timeout_ms,
+            headless=not browser_headed,
+            connect_ips=probe_ips or local_ips,
+            profile_id=profile.id,
+        )
+    except (FileNotFoundError, RuntimeError) as ex:
+        note = f"Playwright không khởi chạy: {ex}"
+        trace_merged = f"{trace_text} | {note}" if trace_text else note
+        return _row_probe_timeout(
+            original_label,
+            local_rcode,
+            local_ips,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            dns_column_suffix=dns_column_suffix,
+            trace=trace_merged,
+            http_version=browser_via,
+            tls_result=tls_result,
+            evidence=evidence,
+            playwright_error=note,
+            dns_preserve_from=dns_preserve_from,
+            result_source=browser_source,
+        )
+
+    if browser.final_status > 0:
+        if evidence is not None:
+            pw_err = _playwright_error_cell(browser)
+            if pw_err:
+                evidence.playwright_error = pw_err
+        probe = _browser_to_http_probe(browser)
+        probe_kw = _probe_http_cols(probe)
+        effective_tls = browser.browser_tls if browser.browser_tls else tls_result
+        note = f"Playwright document HTTP {browser.final_status} ({browser.profile_mode})"
+        if browser.browser_tls and browser.browser_tls.ok:
+            note += f"; TLS via browser ({browser.browser_tls.version})"
+        trace_merged = f"{trace_text} | {note}" if trace_text else note
+        return _classify_local_http_response(
+            original_label,
+            host,
+            probe,
+            local_rcode,
+            local_ips,
+            dns_column_suffix=dns_column_suffix,
+            tls_result=effective_tls,
+            trace=trace_merged,
+            dns_sinkhole=dns_sinkhole_flag,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            evidence=evidence,
+            dns_preserve_from=dns_preserve_from,
+            result_source=browser_source,
+        )
+
+    if tls_result is None:
+        tls_result = await _probe_tls_sequential(
+            host, probe_ips, is_ip_target=is_ip_target, timeout=float(timeout)
+        )
+        tls_kw = _tls_fields(tls_result)
+
+    fail = browser.error or _tls_failure_note(tls_result)
+    final_status = _status_for_probe_failure(
+        tls_result=tls_result,
+        fail_text=fail,
+        waf_suspected=browser.waf_suspected,
+    )
+    if browser.waf_suspected:
+        detail = "Playwright timeout — không lấy được mã document (test lại sau)"
+    else:
+        detail = f"HTTP+TLS fail — {fail}; không lấy được mã document (test lại sau)"
+    trace_merged = f"{trace_text} | {detail}" if trace_text else detail
+    pw_err = _playwright_error_cell(browser, fail)
+
+    return _row_probe_timeout(
+        original_label,
+        local_rcode,
+        local_ips,
+        public_rcode=public_rcode,
+        public_ips=public_ips,
+        dns_column_suffix=dns_column_suffix,
+        trace=trace_merged,
+        http_version=browser_via,
+        tls_result=tls_result,
+        evidence=evidence,
+        playwright_error=pw_err,
+        dns_preserve_from=dns_preserve_from,
+        result_source=browser_source,
+    )
+
+
+async def classify_phase2_deep_retry(
+    raw_target: str,
+    original_label: str,
+    phase1_row: dict[str, Any],
+    *,
+    timeout_seconds: int,
+    browser_profile: str,
+    on_partial: Optional[OnPartialCallback] = None,
+) -> dict[str, str]:
+    """
+    Phase 2 — chỉ chạy lại Playwright (headed, profile khác, deep scan).
+    Giữ cột bằng chứng DNS/TCP từ Phase 1.
+    """
+    host, urls = extract_host_and_urls(raw_target)
+    if not host or not urls:
+        return dict(phase1_row)
+
+    local_cell = str(phase1_row.get(COL_DNS_LOCAL) or phase1_row.get(COL_DNS, ""))
+    public_cell = str(phase1_row.get(COL_DNS_PUBLIC) or phase1_row.get(COL_DNS, ""))
+    local_rcode = _rcode_from_dns_cell(local_cell)
+    local_ips = _ips_from_dns_cell(local_cell)
+    public_rcode = _rcode_from_dns_cell(public_cell)
+    public_ips = _ips_from_dns_cell(public_cell)
+    prior_trace = str(phase1_row.get(COL_TRACE, "") or "").strip()
+    profile = get_browser_profile(browser_profile)
+    browser_via = profile.playwright_via_label
+    p2_source = browser_result_source(browser_profile, phase2=True)
+    dns_preserve_from = phase1_row
+
+    await _emit_partial(
+        on_partial,
+        _row_dns_partial(
+            original_label,
+            local_rcode,
+            local_ips,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            pending_vi=VI_STEP_PHASE2,
+            http_version=browser_via,
+            dns_preserve_from=dns_preserve_from,
+        ),
+    )
+
+    timeout_ms = clamp_browser_timeout_ms(timeout_seconds, phase2=True)
+    url = urls[0]
+    try:
+        browser = await probe_url_browser(
+            url,
+            timeout_ms=timeout_ms,
+            headless=False,
+            deep_scan=True,
+            phase2=True,
+            profile_id=browser_profile,
+            connect_ips=None,
+        )
+    except (FileNotFoundError, RuntimeError) as ex:
+        note = f"Phase 2 Playwright không khởi chạy ({profile.label}): {ex}"
+        trace = f"{prior_trace} | {note}" if prior_trace else note
+        phase2_row = _row_probe_timeout(
+            original_label,
+            local_rcode,
+            local_ips,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            trace=trace,
+            http_version=browser_via,
+            playwright_error=note,
+            dns_preserve_from=dns_preserve_from,
+            result_source=p2_source,
+        )
+        return merge_phase2_result(phase1_row, phase2_row)
+
+    if browser.final_status > 0:
+        probe = _browser_to_http_probe(browser)
+        effective_tls = browser.browser_tls
+        note = (
+            f"Phase 2 ({profile.label} headed {timeout_seconds}s): "
+            f"HTTP {browser.final_status} ({browser.profile_mode})"
+        )
+        trace = f"{prior_trace} | {note}" if prior_trace else note
+        phase2_row = _classify_local_http_response(
+            original_label,
+            host,
+            probe,
+            local_rcode,
+            local_ips,
+            tls_result=effective_tls,
+            trace=trace,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            dns_preserve_from=dns_preserve_from,
+            result_source=p2_source,
+        )
+        pw_err = _playwright_error_cell(browser)
+        if pw_err:
+            phase2_row[COL_PLAYWRIGHT_ERR] = pw_err
+        return merge_phase2_result(phase1_row, phase2_row)
+
+    tls_result = browser.browser_tls
+    if tls_result is None:
+        tls_result = await _probe_tls_sequential(
+            host, local_ips, is_ip_target=is_ipv4(host), timeout=float(timeout_seconds)
+        )
+
+    fail = browser.error or (tls_result and _tls_failure_note(tls_result)) or "timeout"
+    final_status = _status_for_probe_failure(
+        tls_result=tls_result,
+        fail_text=fail,
+        waf_suspected=browser.waf_suspected,
+    )
+    pw_err = _playwright_error_cell(browser, fail)
+    detail = (
+        f"Phase 2 ({profile.label} headed {timeout_seconds}s): {PHASE2_FINAL_TIMEOUT_DETAIL}"
+        if final_status == STATUS_TIMEOUT
+        else f"Phase 2 ({profile.label}): {fail}"
+    )
+    trace = f"{prior_trace} | {detail}" if prior_trace else detail
+
+    phase2_row = _row_probe_timeout(
+        original_label,
+        local_rcode,
+        local_ips,
+        public_rcode=public_rcode,
+        public_ips=public_ips,
+        trace=trace,
+        http_version=browser_via,
+        tls_result=tls_result,
+        playwright_error=pw_err or PHASE2_FINAL_TIMEOUT_DETAIL,
+        dns_preserve_from=dns_preserve_from,
+        result_source=p2_source,
+    )
+    return merge_phase2_result(phase1_row, phase2_row)
 
 
 async def classify_live_domain(
@@ -358,197 +723,323 @@ async def classify_live_domain(
     dns_timeout: int = DNS_TIMEOUT_SECONDS,
     retries: int = HTTP_RETRIES,
     backoff_base: float = BACKOFF_BASE_SECONDS,
+    enable_trace: bool = False,
+    browser_headed: bool = False,
+    enable_step3: bool = True,
+    on_partial: Optional[OnPartialCallback] = None,
 ) -> dict[str, str]:
+    t0 = time.perf_counter()
+    row = await _classify_live_domain_work(
+        raw_target,
+        original_label,
+        session,
+        resolver,
+        public_resolver,
+        timeout,
+        proxy_url=proxy_url,
+        follow_redirects=follow_redirects,
+        dns_timeout=dns_timeout,
+        retries=retries,
+        backoff_base=backoff_base,
+        enable_trace=enable_trace,
+        browser_headed=browser_headed,
+        enable_step3=enable_step3,
+        on_partial=on_partial,
+    )
+    if not str(row.get(COL_LATENCY, "")).strip() or row.get(COL_LATENCY) == "—":
+        row[COL_LATENCY] = f"{int((time.perf_counter() - t0) * 1000)}ms"
+    return row
+
+
+async def _classify_live_domain_work(
+    raw_target: str,
+    original_label: str,
+    session: AsyncSession,
+    resolver: aiodns.DNSResolver,
+    public_resolver: aiodns.DNSResolver,
+    timeout: int,
+    proxy_url: Optional[str] = None,
+    follow_redirects: bool = True,
+    dns_timeout: int = DNS_TIMEOUT_SECONDS,
+    retries: int = HTTP_RETRIES,
+    backoff_base: float = BACKOFF_BASE_SECONDS,
+    enable_trace: bool = False,
+    browser_headed: bool = False,
+    enable_step3: bool = True,
+    on_partial: Optional[OnPartialCallback] = None,
+) -> dict[str, str]:
+    _ = follow_redirects
     host, urls = extract_host_and_urls(raw_target)
     is_ip_target = is_ipv4(host)
     local_rcode = "—"
     local_ips: list[str] = []
+    public_rcode = "—"
     public_ips: list[str] = []
 
     if not host or not urls:
-        return build_live_row_dict(
-            original_label,
-            STATUS_DEAD,
-            "Input không hợp lệ",
-            "",
-            "",
-            "—",
-            "N/A",
-            [],
-        )
+        return build_live_row_dict(original_label, STATUS_DEAD, "", "—", "N/A", [])
+
+    profile = active_browser_profile()
+    probe_ips: list[str] = []
+    dns_column_suffix = ""
+    dns_step1_trace = ""
+    dns_suspicion = False
+    evidence = LayerEvidence()
+    pub_kw = _pub_dns_kw(public_rcode, public_ips)
 
     if is_ip_target:
         local_rcode, local_ips = ("NOERROR", [host])
+        probe_ips = [host]
+        await _fill_tcp_evidence(evidence, [host], timeout)
+        await _emit_partial(
+            on_partial,
+            _row_dns_partial(
+                original_label,
+                local_rcode,
+                local_ips,
+                public_rcode=public_rcode,
+                public_ips=public_ips,
+                pending_vi=VI_STEP_DNS,
+            ),
+        )
     else:
-        local_rcode, local_ips = await resolve_a_and_aaaa(host, resolver, dns_timeout, prefer_os_getaddrinfo=True)
-        _public_rcode, public_ips, ra_pub, r6_pub = await resolve_a_and_aaaa_with_rcodes(
-            host, public_resolver, dns_timeout, prefer_os_getaddrinfo=False
+        await _emit_partial(
+            on_partial,
+            _row_dns_partial(
+                original_label,
+                "—",
+                [],
+                public_rcode="—",
+                public_ips=[],
+                pending_vi=VI_STEP_DNS,
+            ),
+        )
+        (
+            (local_rcode, local_ips, public_rcode, public_ips),
+            (google_rcode, google_ips, cf_rcode, cf_ips),
+        ) = await asyncio.gather(
+            resolve_dns_step1_parallel(host, resolver, public_resolver, dns_timeout),
+            resolve_doh_step1_parallel(host, dns_timeout),
+        )
+        evidence.google_doh_rcode = google_rcode
+        evidence.google_doh_ips = list(google_ips)
+        evidence.cloudflare_doh_rcode = cf_rcode
+        evidence.cloudflare_doh_ips = list(cf_ips)
+        pub_kw = _pub_dns_kw(public_rcode, public_ips)
+
+        await _emit_partial(
+            on_partial,
+            _row_dns_partial(
+                original_label,
+                local_rcode,
+                local_ips,
+                public_rcode=public_rcode,
+                public_ips=public_ips,
+                pending_vi=VI_STEP_HTTP,
+                evidence=evidence,
+            ),
         )
 
-        if ra_pub == "NXDOMAIN" and r6_pub == "NXDOMAIN":
+        step1 = evaluate_dns_step1(local_rcode, local_ips, public_rcode, public_ips)
+        dns_step1_trace = step1.trace_note
+
+        if step1.outcome == "dead":
+            return _row_dead_both_dns_empty(
+                original_label,
+                local_rcode,
+                local_ips,
+                public_rcode=public_rcode,
+                public_ips=public_ips,
+                dns_column_suffix=step1.dns_column_suffix,
+                evidence=evidence,
+            )
+
+        if step1.outcome == "blocked":
+            dns_column_suffix = step1.dns_column_suffix
+            probe_ips = prefer_ipv4_first(real_ips_from_list(public_ips))
+            if not probe_ips:
+                probe_ips = prefer_ipv4_first(real_ips_from_list(local_ips))
+            dns_suspicion = True
+            if step1.trace_note:
+                dns_step1_trace = (
+                    f"{dns_step1_trace} | {step1.trace_note}"
+                    if dns_step1_trace
+                    else step1.trace_note
+                )
+        else:
+            dns_suspicion = step1.dns_suspicion
+            dns_column_suffix = step1.dns_column_suffix
+            probe_ips = list(step1.probe_ips)
+            if not probe_ips:
+                probe_ips = prefer_ipv4_first(real_ips_from_list(local_ips))
+            if not probe_ips:
+                probe_ips = prefer_ipv4_first(real_ips_from_list(public_ips))
+
+    if not is_ip_target and not probe_ips:
+        probe_ips = list(local_ips)
+
+    await _fill_tcp_evidence(
+        evidence,
+        _tcp_probe_ip_list(probe_ips, public_ips, local_ips, evidence),
+        timeout,
+    )
+
+    dns_snapshot = dns_evidence_columns_dict(
+        local_rcode,
+        local_ips,
+        public_rcode=public_rcode,
+        public_ips=public_ips,
+        evidence=evidence,
+    )
+
+    dns_sinkhole_flag = False
+    if not is_ip_target and public_ips:
+        try:
+            dns_sinkhole_flag = detect_dns_sinkhole(local_ips, public_ips)
+        except Exception:
+            dns_sinkhole_flag = False
+
+    primary_url = urls[0]
+
+    # —— Bước 2: HTTP reference (TCP) ——
+    await _emit_partial(
+        on_partial,
+        _row_dns_partial(
+            original_label,
+            local_rcode,
+            local_ips,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            pending_vi=VI_STEP_HTTP,
+            dns_column_suffix=dns_column_suffix,
+            evidence=evidence,
+            dns_preserve_from=dns_snapshot,
+        ),
+    )
+
+    curl_connect_ips: Optional[list[str]] = None
+    if dns_suspicion and probe_ips and not is_ip_target:
+        curl_connect_ips = list(probe_ips)
+
+    http_probe = await _probe_http_step2(
+        session,
+        urls,
+        timeout=timeout,
+        proxy_url=proxy_url,
+        retries=retries,
+        backoff_base=backoff_base,
+        connect_host=host,
+        connect_ips=curl_connect_ips,
+    )
+
+    if http_probe and http_probe.final_status > 0:
+        tls_result = await _probe_tls_sequential(
+            host, probe_ips, is_ip_target=is_ip_target, timeout=float(timeout)
+        )
+        return _classify_local_http_response(
+            original_label,
+            host,
+            http_probe,
+            local_rcode,
+            local_ips,
+            dns_column_suffix=dns_column_suffix,
+            tls_result=tls_result,
+            trace=dns_step1_trace,
+            dns_sinkhole=dns_sinkhole_flag,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            evidence=evidence,
+            dns_preserve_from=dns_snapshot,
+        )
+
+    if not enable_step3:
+        tls_result = await _probe_tls_sequential(
+            host, probe_ips, is_ip_target=is_ip_target, timeout=float(timeout)
+        )
+        if tls_result and (
+            tls_result.failure_kind in _TLS_DEAD_KINDS or tls_result.cert_dead
+        ):
+            trace_merged = dns_step1_trace
             return build_live_row_dict(
                 original_label,
                 STATUS_DEAD,
-                "Public DNS: cả A và AAAA đều NXDOMAIN (tên không tồn tại)",
-                "",
-                "",
+                "—",
                 "—",
                 local_rcode,
                 local_ips,
-                dns_column_suffix="",
+                dns_column_suffix=dns_column_suffix,
+                trace=trace_merged,
+                evidence=evidence,
+                dns_preserve_from=dns_snapshot,
+                result_source=SOURCE_HTTP_REFERENCE,
+                **_pub_dns_kw(public_rcode, public_ips),
+                **_tls_fields(tls_result),
             )
+        note = "HTTP không có mã — Bước 3 Playwright tắt"
+        trace_merged = f"{dns_step1_trace} | {note}" if dns_step1_trace else note
+        return _row_probe_timeout(
+            original_label,
+            local_rcode,
+            local_ips,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            dns_column_suffix=dns_column_suffix,
+            trace=trace_merged,
+            tls_result=tls_result,
+            evidence=evidence,
+            dns_preserve_from=dns_snapshot,
+            result_source=SOURCE_HTTP_REFERENCE,
+        )
 
-        # TIMEOUT và không có bản ghi A/AAAA từ public -> coi là DEAD.
-        if not public_ips and _public_rcode == "TIMEOUT":
-            return build_live_row_dict(
-                original_label,
-                STATUS_DEAD,
-                "Public DNS TIMEOUT và không có bản ghi A/AAAA -> DEAD",
-                "",
-                "",
-                "—",
-                local_rcode,
-                local_ips,
-                dns_column_suffix="",
-            )
+    # —— Bước 3: Playwright ——
+    profile = active_browser_profile()
+    browser_via = profile.playwright_via_label
+    playwright_ips = list(probe_ips)
+    pw_dns_suffix = dns_column_suffix
+    if not is_ip_target and not dns_suspicion:
+        resolved_ips, suffix = await resolve_probe_ips(
+            host, probe_ips or local_ips, profile, dns_timeout
+        )
+        if resolved_ips:
+            playwright_ips = resolved_ips
+        if suffix:
+            pw_dns_suffix = (dns_column_suffix or "") + suffix
 
-        public_has_record_hint = bool(public_ips)
-        if local_rcode == "NXDOMAIN" and public_has_record_hint:
-            return build_live_row_dict(
-                original_label,
-                STATUS_BLOCKED,
-                "DNS trên tuyến mạng đang dùng: NXDOMAIN — ISP chặn/RPZ DNS (Public DNS vẫn có bản ghi)",
-                "",
-                "",
-                "—",
-                local_rcode,
-                local_ips,
-                dns_column_suffix="",
-            )
+    await _emit_partial(
+        on_partial,
+        _row_dns_partial(
+            original_label,
+            local_rcode,
+            local_ips,
+            public_rcode=public_rcode,
+            public_ips=public_ips,
+            pending_vi=VI_STEP_BROWSER,
+            dns_column_suffix=pw_dns_suffix,
+            http_version=browser_via,
+            evidence=evidence,
+            dns_preserve_from=dns_snapshot,
+        ),
+    )
 
-        if detect_dns_sinkhole(local_ips, public_ips):
-            return build_live_row_dict(
-                original_label,
-                STATUS_BLOCKED,
-                "DNS sinkhole trên tuyến local (IP rác) — chặn DNS ISP so với bản ghi công khai",
-                "",
-                "",
-                "—",
-                local_rcode,
-                local_ips,
-                dns_column_suffix="",
-            )
-
-    # Retry + backoff chỉ ở đây; send_live_request(..., retries=0) tránh chồng với retry trong http_fetch.
-    for url in urls:
-        for attempt in range(retries + 1):
-            try:
-                status_code, final_url, history_urls, redirect_chain, _response_text = await send_live_request(
-                    session,
-                    url,
-                    timeout=timeout,
-                    proxy_url=proxy_url,
-                    follow_redirects=follow_redirects,
-                    retries=0,
-                    backoff_base=backoff_base,
-                )
-                if not isinstance(status_code, int) or status_code <= 0:
-                    raise RuntimeError(f"No HTTP response (status_code={status_code})")
-
-                return _classify_local_http_response(
-                    original_label,
-                    host,
-                    status_code,
-                    final_url,
-                    history_urls,
-                    redirect_chain,
-                    local_rcode,
-                    local_ips,
-                    dns_column_suffix="",
-                )
-            except Exception:
-                if attempt < retries:
-                    await asyncio.sleep(backoff_base * (2**attempt))
-                    continue
-
-                # IP trực tiếp: không có SNI/ECH -> probe cả 443 và 80,
-                # kết luận dựa vào kết nối TCP local thay vì dựa vào Worker.
-                if is_ip_target:
-                    tcp_443 = await probe_tcp(host, port=443, timeout=float(timeout))
-                    tcp_80 = await probe_tcp(host, port=80, timeout=float(timeout))
-                    tcp_ok = tcp_443 or tcp_80
-
-                    if not tcp_ok:
-                        return build_live_row_dict(
-                            original_label,
-                            STATUS_BLOCKED,
-                            f"IP trực tiếp, TCP {host}:443 và :80 đều không kết nối được -> BLOCKED tầng mạng",
-                            url,
-                            "—",
-                            "—",
-                            local_rcode,
-                            local_ips,
-                            dns_column_suffix="",
-                        )
-
-                    port_ok = 443 if tcp_443 else 80
-                    return build_live_row_dict(
-                        original_label,
-                        STATUS_LEAKED,
-                        f"IP trực tiếp, TCP:{port_ok} reachable từ local -> người dùng vào được -> LEAKED",
-                        url,
-                        "—",
-                        "—",
-                        local_rcode,
-                        local_ips,
-                        dns_column_suffix="",
-                    )
-
-                # Local HTTP fail hết retry → kiểm tra ECH để quyết định BLOCKED vs verify with Worker
-                ech = await has_ech_record(host)
-                if not ech:
-                    # Không có ECH → BLOCKED
-                    return build_live_row_dict(
-                        original_label,
-                        STATUS_BLOCKED,
-                        "Local HTTP fail, không có ECH record → người dùng không bypass SNI block được → BLOCKED",
-                        url,
-                        "—",
-                        "—",
-                        local_rcode,
-                        local_ips,
-                        dns_column_suffix="",
-                    )
-
-                # Có ECH → verify with Worker để xác định LEAKED hay DEAD
-                worker_result = await _verify_with_worker(url)
-                row = _row_from_worker_result(
-                    original_label,
-                    worker_result,
-                    local_rcode,
-                    local_ips,
-                    public_ips=public_ips,
-                    probe_url=url,
-                    dns_column_suffix="",
-                )
-                if row is not None:
-                    return row
-                err_msg = (
-                    worker_result.get("error", "unknown error")
-                    if isinstance(worker_result, dict)
-                    else "unknown error"
-                )
-                wr = worker_result if isinstance(worker_result, dict) else {}
-                http_disp = _http_col_when_worker_row_missing(wr)
-
-                return build_live_row_dict(
-                    original_label,
-                    STATUS_DEAD,
-                    f"Có ECH nhưng Worker cũng không phản hồi (Server Down: {err_msg}) → DEAD",
-                    url,
-                    http_disp,
-                    "—",
-                    local_rcode,
-                    local_ips,
-                    dns_column_suffix="",
-                )
+    return await _classify_playwright_step3(
+        original_label,
+        host,
+        primary_url,
+        local_rcode,
+        local_ips,
+        playwright_ips,
+        public_ips,
+        public_rcode=public_rcode,
+        timeout=timeout,
+        is_ip_target=is_ip_target,
+        enable_trace=enable_trace,
+        browser_headed=browser_headed,
+        dns_column_suffix=pw_dns_suffix,
+        dns_sinkhole_flag=dns_sinkhole_flag,
+        dns_step1_trace=dns_step1_trace,
+        session=session,
+        proxy_url=proxy_url,
+        backoff_base=backoff_base,
+        evidence=evidence,
+        dns_preserve_from=dns_snapshot,
+    )

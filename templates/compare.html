@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>So sánh kết quả — Dynamic Live Testing</title>
+  <link rel="stylesheet" href="/static/app.css?v=18" />
+</head>
+<body>
+  <div class="layout layout--wide">
+    <p class="nav-back"><a href="/#saved-results">← Danh sách đã lưu</a></p>
+    <h1>So sánh kết quả kiểm thử</h1>
+    <p class="caption">Đối chiếu trạng thái từng domain giữa {{ sessions|length }} phiên đã chọn.</p>
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+  {% else %}
+
+    <div class="compare-session-cards">
+      {% for s in sessions %}
+      <div class="compare-session-card">
+        <div class="compare-session-card__time">{{ s.created_label }}</div>
+        <div class="compare-session-card__title">{{ s.upload_stem }}</div>
+        <div class="compare-session-card__meta">
+          <span class="compare-tag">{{ s.browser_profile_label }}</span>
+          <span>{{ "%.1f"|format(s.elapsed_seconds) }}s</span>
+        </div>
+        <div class="compare-session-card__counts">
+          <span class="saved-col-blocked">B {{ s.blocked }}</span>
+          <span class="saved-col-timeout">T {{ s.timeout|default(0) }}</span>
+          <span class="saved-col-leaked">L {{ s.leaked }}</span>
+          <span class="saved-col-dead">D {{ s.dead }}</span>
+          <span class="compare-total">/ {{ s.total }}</span>
+        </div>
+        <a class="btn-secondary btn-sm" href="/results/{{ s.id }}">Xem chi tiết</a>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="metrics compare-metrics">
+      <div class="metric-card metric-card--total">
+        <div class="label">Domain trong bảng</div>
+        <div class="value">{{ stats.total_domains }}</div>
+      </div>
+      <div class="metric-card metric-card--blocked">
+        <div class="label">Khác trạng thái</div>
+        <div class="value">{{ stats.changed }}</div>
+      </div>
+      <div class="metric-card metric-card--leaked">
+        <div class="label">Giống nhau</div>
+        <div class="value">{{ stats.unchanged }}</div>
+      </div>
+      <div class="metric-card metric-card--dead">
+        <div class="label">Thiếu ở ≥1 phiên</div>
+        <div class="value">{{ stats.partial }}</div>
+      </div>
+    </div>
+
+    <form method="get" action="/compare" class="filter-row compare-filter-row">
+      <input type="hidden" name="ids" value="{{ ids_param }}" />
+      <label for="q">Tìm domain</label>
+      <input type="text" id="q" name="q" value="{{ q or '' }}" placeholder="Lọc theo tên miền..." style="max-width:320px" />
+      <label class="checkbox-label compare-only-changed">
+        <input type="checkbox" name="only_changed" value="1" {% if only_changed %}checked{% endif %} />
+        Chỉ hiện domain khác trạng thái
+      </label>
+      <button type="submit" class="btn-secondary">Áp dụng</button>
+    </form>
+
+    <p class="small">Hiển thị {{ rows|length }} dòng — tổng hợp từ {{ stats.all_domains_union }} domain (hợp các phiên).</p>
+
+    <div class="table-wrap compare-table-wrap">
+      <table class="data-table compare-table" id="compare-table">
+        <thead>
+          <tr>
+            <th class="compare-col-domain">Domain</th>
+            {% for s in sessions %}
+            <th class="compare-col-session">
+              <div class="compare-th-label">{{ s.created_label }}</div>
+              <div class="compare-th-sub">{{ s.upload_stem }} · {{ s.browser_profile_label }}</div>
+            </th>
+            {% endfor %}
+            <th class="compare-col-flag">Ghi chú</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr class="{% if row.changed %}compare-row--changed{% endif %}{% if row.partial %} compare-row--partial{% endif %}">
+            <td class="compare-col-domain compare-domain-cell">{{ row.domain }}</td>
+            {% for cell in row.cells %}
+            <td class="compare-cell compare-cell--{{ cell.status|status_row_class }}">
+              {% if cell.present %}
+              <div class="compare-status">{{ cell.final_vi }}</div>
+              <div class="compare-http">HTTP {{ cell.http }}{% if cell.http_ver and cell.http_ver != '—' %} · {{ cell.http_ver }}{% endif %}</div>
+              {% else %}
+              <span class="compare-missing">— không có trong phiên này —</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+            <td class="compare-col-flag">
+              {% if row.changed %}
+              <span class="compare-badge compare-badge--changed">Khác</span>
+              {% elif row.partial %}
+              <span class="compare-badge compare-badge--partial">Thiếu dòng</span>
+              {% else %}
+              <span class="compare-badge compare-badge--same">Giống</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if not rows %}
+      <p class="compare-empty">Không có dòng nào khớp bộ lọc. Thử bỏ “chỉ khác trạng thái” hoặc đổi từ khóa tìm.</p>
+      {% endif %}
+    </div>
+
+    <p class="small compare-hint">
+      Chọn phiên so sánh từ <a href="/#saved-results">danh sách đã lưu</a> (tích 2–5 phiên → <strong>So sánh</strong>).
+    </p>
+  {% endif %}
+  </div>
+</body>
+</html>

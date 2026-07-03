@@ -1,0 +1,4 @@
+1. In đúng version TLS của domain (hiện tại dùng worker của cloudflare -> luôn hiển thị TLSv1.3 -> chưa chính xác)
+2. Vấn đề xác định leaked/blocked:
+- Sử dụng web ưu tiên TLS1.3 để test, nếu không có 1.3 thì mới fallback về 1.2
+- Trace optional: Debug sâu từng layer (DNS → TCP → TLS → HTTP)

@@ -3,38 +3,89 @@ import re
 STATUS_BLOCKED = "BLOCKED"
 STATUS_LEAKED = "LEAKED"
 STATUS_DEAD = "DEAD DOMAIN"
+STATUS_TIMEOUT = "TIMEOUT"
 
 COL_ORIGINAL = "Domain"
 COL_FINAL_VI = "Status"
+COL_RESULT_SOURCE = "Source"
 COL_HTTP = "HTTP"
+COL_HTTP_VER = "HTTP Ver"
 COL_CHAIN = "Redirect chain"
-COL_FINAL_URL = "Final URL"
-COL_DNS = "DNS resolution"
-COL_DETAIL = "Detail"
+COL_DNS = "DNS"
+# Cột legacy — chỉ đọc CSV/bảng cũ; run mới chỉ ghi COL_DNS
+COL_DNS_LOCAL = "Local DNS"
+COL_DNS_PUBLIC = "Public DNS"
+COL_DNS_GOOGLE_DOH = "Google DoH"
+COL_DNS_CLOUDFLARE_DOH = "Cloudflare DoH"
+COL_DNS_LEGACY_KEYS = (
+    COL_DNS_LOCAL,
+    COL_DNS_PUBLIC,
+    COL_DNS_GOOGLE_DOH,
+    COL_DNS_CLOUDFLARE_DOH,
+    "DNS resolution",
+)
+COL_TCP_80 = "TCP 80"
+COL_TCP_443 = "TCP 443"
+COL_PLAYWRIGHT_ERR = "Playwright error"
+COL_TLS = "TLS/SSL"
+COL_LATENCY = "Latency"
+COL_TRACE = "Trace"
+
+SOURCE_DNS_A_AAAA = "A&AAAA"
+SOURCE_HTTP_REFERENCE = "HTTP Reference"
+
+MAX_HTTP_REDIRECTS = 15
+REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
 EXPECTED_GUEST_IP = "113.160.48.66"
 
-USER_AGENT = (
-    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko)" 
-    "Chrome/145.0.0.0 Mobile Safari/537.36"
+USER_AGENT_EDGE_149 = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
 )
 
-'''
+USER_AGENT_COCCOC_154 = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/148.0.0.0 Safari/537.36 coc_coc_browser/154.0.0"
+)
 
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
-    "Version/17.5 Safari/605.1.15"
-)'''
+USER_AGENT_CHROME_149 = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/149.0.0.0 Safari/537.36"
+)
 
-'''USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
-'''
+# Mặc định khớp Microsoft Edge 149 (trình duyệt test chính trên Windows).
+USER_AGENT = USER_AGENT_EDGE_149
 
 ASYNC_CONCURRENCY = 20
 
 DNS_TIMEOUT_SECONDS = 4
+DNS_QUERY_ATTEMPTS = 3
+DNS_RETRY_BACKOFF_SECONDS = 0.3
 HTTP_RETRIES = 2
 BACKOFF_BASE_SECONDS = 0.3
 PREFLIGHT_TIMEOUT_SECONDS = 3
+
+# HTTP/3 (QUIC): edge Cloudflare đôi khi trả 5xx chậm hơn 10s — tránh timeout giả → LEAKED.
+HTTP_H3_TIMEOUT_MIN = 20
+HTTP_H3_TIMEOUT_MAX = 30
+
+
+PHASE1_MIN_TIMEOUT_SECONDS = 10
+PHASE1_MAX_TIMEOUT_SECONDS = 45
+
+
+def clamp_phase1_timeout_seconds(seconds: int) -> int:
+    try:
+        n = int(seconds)
+    except (TypeError, ValueError):
+        n = PHASE1_MIN_TIMEOUT_SECONDS
+    return max(PHASE1_MIN_TIMEOUT_SECONDS, min(n, PHASE1_MAX_TIMEOUT_SECONDS))
+
+
+def effective_h3_timeout(base_seconds: int) -> int:
+    """Timeout riêng cho hop h3 — cao hơn TCP một chút, có trần."""
+    return min(max(int(base_seconds) + 10, HTTP_H3_TIMEOUT_MIN), HTTP_H3_TIMEOUT_MAX)
 
 PUBLIC_DNS_SERVERS = [
     "8.8.8.8",

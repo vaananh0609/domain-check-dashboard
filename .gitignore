@@ -1,11 +1,22 @@
 __pycache__/
 *.pyc
-.vscode/
-/.venv/
+.venv/
 env/
 venv/
 *.egg-info/
 
-# File tạm / export tay (không thuộc mã nguồn)
+# IDE / cache
+.vscode/
+.cursor/
+.pytest_cache/
+
+# File tạm / export / dữ liệu mẫu local
 tmp_*.txt
-output-*.csv
+output_*.csv
+operator_bl1.txt
+bypass.csv
+danh_sach_*.txt
+
+# Kết quả kiểm thử lưu trên máy (local persistence)
+data/saved_results/*.json
+!data/saved_results/.gitkeep
